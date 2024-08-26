@@ -1,0 +1,4021 @@
+---
+title: "Count Occupancy Models"
+author: "Ian A. Pshea-Smith"
+date: "2024-06-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r Libraries}
+  # N-Mixture libraries
+  library(dplyr)        # For data manipulation
+  library(tidyr)        # For data tidying
+  library(raster)       # For raster data handling
+  library(sf)           # For spatial data handling
+  library(unmarked)     # For occupancy modeling
+  library(ggplot2)      # For plotting
+  library(readxl)       # For reading Excel files
+  library(plotrix)      # For color scales in plots
+  library(tibble)       # For flipping rows/column names
+
+  # spatial hurdle libraries
+  library(dplyr)
+  library(ggplot2)
+  library(inlabru)
+  library(terra)
+  library(sf)
+  library(RColorBrewer)
+  library(magrittr)
+  library(patchwork)
+  library(parallel)
+  library(sp)
+  library(countreg)
+  library(gstat)
+  library(MuMIn)
+  library(parallel)
+  library(viridis)
+  library(RColorBrewer)
+  library(readr)
+```
+
+
+
+```{r Hurdle Function}
+  hurdle_nb_ll <- function(y, X, par) {
+    # Extract parameters
+    logitpars  = par[grep('logit', names(par))]
+    NegBinpars = par[grep('NegBin', names(par))]
+    
+    theta = exp(par[grep('theta', names(par))])
+    
+    # Logit model part
+    Xlogit = X
+    ylogit = ifelse(y == 0, 0, 1)
+    
+    LPlogit = Xlogit %*% logitpars
+    mulogit = plogis(LPlogit)
+    
+    # Calculate the likelihood
+    logliklogit = -sum(ylogit * log(mulogit) + (1 - ylogit) * log(1 - mulogit))
+    
+    # NB part
+    XNB = X[y > 0, ]
+    yNB = y[y > 0]
+    
+    muNB = exp(XNB %*% NegBinpars)
+    
+    # Calculate the likelihood
+    loglik0  = dnbinom(0, mu = muNB, size = theta, log = TRUE)
+    loglik1  = dnbinom(yNB, mu = muNB, size = theta, log = TRUE)
+    loglikNB = -(sum(loglik1) - sum(log(1 - exp(loglik0))))
+    
+    # Combine likelihoods
+    loglik = loglikNB + logliklogit
+    loglik
+  }
+
+
+```
+
+
+
+```{r Data Import}
+
+  # Data Path
+    data_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/CountModels/"
+    #data_path <- "C:/Users/Owner/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/CountModels/"
+
+  # Haiti Polygons
+    haitiPolygon <- st_read("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Shapefiles/HaitiPolygon.shp")
+    haitiPolygon_geo <- st_transform(haitiPolygon, crs = 4326)
+    haiti_vector <- vect("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/MaxEnt/Haiti_Shapefile/Haiti.shp")
+    
+      extent <- st_bbox(haitiPolygon)
+      res <- 0.01  # Define the resolution of the raster (change as needed)
+      
+      # Create an empty raster with the defined extent and resolution
+      r <- raster(haitiPolygon, resolution = res)
+      
+      # Rasterize the polygon
+      #haitiRaster <- rasterize(haitiPolygon, r, field = 1)  # `field` specifies which column to use for raster values
+      
+      # Plot the raster
+      plot(haitiPolygon)
+  
+  # Count Data
+    HCM.Full <- read.csv(file = paste0(data_path, "HCM_Full.csv"))
+    HCM.noNA <- na.omit(HCM.Full)
+    
+    setwd("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken")
+    library(readr)
+    Haiti_CountTime <- readr::read_csv("Haiti_CountTime.csv", 
+      col_types = cols(OID_ = col_skip(), Date = col_date(format = "%m/%d/%Y"), 
+          Month = col_skip(), BltSurf_Su = col_double()))
+    View(Haiti_CountTime)
+    Haiti_CountTime_clean <- Haiti_CountTime
+    setwd("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/CountModels/")
+    
+    # Define the UTM CRS (example: UTM Zone 18N)
+    utm_crs <- "+proj=utm +zone=18 +datum=WGS84 +units=m +no_defs"
+    # Convert Lat/Lon to UTM
+    Haiti_CountTime_clean_utm <- Haiti_CountTime_clean %>%
+      st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+      st_transform(crs = utm_crs)
+
+    # Extract UTM coordinates
+    utm_coords <- st_coordinates(Haiti_CountTime_clean_utm)
+    HDB <- Haiti_CountTime_clean_utm %>%
+      mutate(UTM_E = utm_coords[,1], UTM_N = utm_coords[,2])
+
+    # Remove the geometry column
+    HDB <- st_drop_geometry(HDB)
+    View(HDB)
+
+  # Raster Data 
+    template_raster <- haiti_vector
+    target_crs <- crs(template_raster)
+    
+    raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/MonthlyCovars"
+    #raster_dir <- "C:/Users/Owner/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/MonthlyCovars"
+    siteraster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/Cov_Tifs"
+    #siteraster_dir <- "C:/Users/Owner/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/Cov_Tifs"
+    
+    NDVI_Apr <- raster(file.path(raster_dir, "NDVI_Apr.tif"))
+    NDVI_Aug <- raster(file.path(raster_dir, "NDVI_Aug.tif"))
+    NDVI_Aug <- raster(file.path(raster_dir, "NDVI_Aug.tif"))
+    NDVI_Dec <- raster(file.path(raster_dir, "NDVI_Dec.tif"))
+    NDVI_Feb <- raster(file.path(raster_dir, "NDVI_Feb.tif"))
+    NDVI_Jan <- raster(file.path(raster_dir, "NDVI_Jan.tif"))
+    NDVI_Jul <- raster(file.path(raster_dir, "NDVI_Jul.tif"))
+    NDVI_Jun <- raster(file.path(raster_dir, "NDVI_Jun.tif"))
+    NDVI_Mar <- raster(file.path(raster_dir, "NDVI_Mar.tif"))
+    NDVI_May <- raster(file.path(raster_dir, "NDVI_May.tif"))
+    NDVI_Nov <- raster(file.path(raster_dir, "NDVI_Nov.tif"))
+    NDVI_Sep <- raster(file.path(raster_dir, "NDVI_Sep.tif"))
+    NDVI_Sep <- raster(file.path(raster_dir, "NDVI_Sep.tif"))
+    Precip_Apr <- raster(file.path(raster_dir, "Precip_Apr.tif"))
+    Precip_Aug <- raster(file.path(raster_dir, "Precip_Aug.tif"))
+    Precip_Dec <- raster(file.path(raster_dir, "Precip_Dec.tif"))
+    Precip_Feb <- raster(file.path(raster_dir, "Precip_Feb.tif"))
+    Precip_Jan <- raster(file.path(raster_dir, "Precip_Jan.tif"))
+    Precip_Jul <- raster(file.path(raster_dir, "Precip_Jul.tif"))
+    Precip_Jun <- raster(file.path(raster_dir, "Precip_Jun.tif"))
+    Precip_Mar <- raster(file.path(raster_dir, "Precip_Mar.tif"))
+    Precip_May <- raster(file.path(raster_dir, "Precip_May.tif"))
+    Precip_Nov <- raster(file.path(raster_dir, "Precip_Nov.tif"))
+    Precip_Sep <- raster(file.path(raster_dir, "Precip_Sep.tif"))
+    TMax_Apr <- raster(file.path(raster_dir, "TMax_Apr.tif"))
+    TMax_Aug <- raster(file.path(raster_dir, "TMax_Aug.tif"))
+    TMax_Dec <- raster(file.path(raster_dir, "TMax_Dec.tif"))
+    TMax_Feb <- raster(file.path(raster_dir, "TMax_Feb.tif"))
+    TMax_Jan <- raster(file.path(raster_dir, "TMax_Jan.tif"))
+    TMax_Jul <- raster(file.path(raster_dir, "TMax_Jul.tif"))
+    TMax_Jun <- raster(file.path(raster_dir, "TMax_Jun.tif"))
+    TMax_Mar <- raster(file.path(raster_dir, "TMax_Mar.tif"))
+    TMax_May <- raster(file.path(raster_dir, "TMax_May.tif"))
+    TMax_Nov <- raster(file.path(raster_dir, "TMax_Nov.tif"))
+    TMax_Sep <- raster(file.path(raster_dir, "TMax_Sep.tif"))
+    TMean_Apr <- raster(file.path(raster_dir, "TMean_Apr.tif"))
+    TMean_Aug <- raster(file.path(raster_dir, "TMean_Aug.tif"))
+    TMean_Dec <- raster(file.path(raster_dir, "TMean_Dec.tif"))
+    TMean_Feb <- raster(file.path(raster_dir, "TMean_Feb.tif"))
+    TMean_Jan <- raster(file.path(raster_dir, "TMean_Jan.tif"))
+    TMean_Jul <- raster(file.path(raster_dir, "TMean_Jul.tif"))
+    TMean_Jun <- raster(file.path(raster_dir, "TMean_Jun.tif"))
+    TMean_Mar <- raster(file.path(raster_dir, "TMean_Mar.tif"))
+    TMean_May <- raster(file.path(raster_dir, "TMean_May.tif"))
+    TMean_Nov <- raster(file.path(raster_dir, "TMean_Nov.tif"))
+    TMean_Sep <- raster(file.path(raster_dir, "TMean_Sep.tif"))
+    TMin_Apr <- raster(file.path(raster_dir, "TMin_Apr.tif"))
+    TMin_Aug <- raster(file.path(raster_dir, "TMin_Aug.tif"))
+    TMin_Dec <- raster(file.path(raster_dir, "TMin_Dec.tif"))
+    TMin_Feb <- raster(file.path(raster_dir, "TMin_Feb.tif"))
+    TMin_Jan <- raster(file.path(raster_dir, "TMin_Jan.tif"))
+    TMin_Jul <- raster(file.path(raster_dir, "TMin_Jul.tif"))
+    TMin_Jun <- raster(file.path(raster_dir, "TMin_Jun.tif"))
+    TMin_Mar <- raster(file.path(raster_dir, "TMin_Mar.tif"))
+    TMin_May <- raster(file.path(raster_dir, "TMin_May.tif"))
+    TMin_Nov <- raster(file.path(raster_dir, "TMin_Nov.tif"))
+    TMin_Sep <- raster(file.path(raster_dir, "TMin_Sep.tif"))
+    WindMean_Apr <- raster(file.path(raster_dir, "WindMean_Apr.tif"))
+    WindMean_Aug <- raster(file.path(raster_dir, "WindMean_Aug.tif"))
+    WindMean_Dec <- raster(file.path(raster_dir, "WindMean_Dec.tif"))
+    WindMean_Feb <- raster(file.path(raster_dir, "WindMean_Feb.tif"))
+    WindMean_Jan <- raster(file.path(raster_dir, "WindMean_Jan.tif"))
+    WindMean_Jul <- raster(file.path(raster_dir, "WindMean_Jul.tif"))
+    WindMean_Jun <- raster(file.path(raster_dir, "WindMean_Jun.tif"))
+    WindMean_Mar <- raster(file.path(raster_dir, "WindMean_Mar.tif"))
+    WindMean_May <- raster(file.path(raster_dir, "WindMean_May.tif"))
+    WindMean_Nov <- raster(file.path(raster_dir, "WindMean_Nov.tif"))
+    WindMean_Sep <- raster(file.path(raster_dir, "WindMean_Sep.tif"))
+    Elevation <- raster(file.path(siteraster_dir, "Elevation.tif"))
+    BltSurfaces <- raster(file.path(siteraster_dir, "BltSurfaces.tif"))
+    PopMean  <- raster(file.path(siteraster_dir, "PopMean.tif"))
+    DstWtrwy <- raster(file.path(siteraster_dir, "DstWtrwy.tif"))
+    nightlight <- raster(file.path(siteraster_dir, "nightlight.tif"))
+    
+    
+    
+    
+    NDVI_Apr <- projectRaster(NDVI_Apr, crs = target_crs)
+    NDVI_Aug <- projectRaster(NDVI_Aug, crs = target_crs)
+    NDVI_Aug <- projectRaster(NDVI_Aug, crs = target_crs)
+    NDVI_Dec <- projectRaster(NDVI_Dec, crs = target_crs)
+    NDVI_Feb <- projectRaster(NDVI_Feb, crs = target_crs)
+    NDVI_Jan <- projectRaster(NDVI_Jan, crs = target_crs)
+    NDVI_Jul <- projectRaster(NDVI_Jul, crs = target_crs)
+    NDVI_Jun <- projectRaster(NDVI_Jun, crs = target_crs)
+    NDVI_Mar <- projectRaster(NDVI_Mar, crs = target_crs)
+    NDVI_May <- projectRaster(NDVI_May, crs = target_crs)
+    NDVI_Nov <- projectRaster(NDVI_Nov, crs = target_crs)
+    NDVI_Sep <- projectRaster(NDVI_Sep, crs = target_crs)
+    NDVI_Sep <- projectRaster(NDVI_Sep, crs = target_crs)
+    Precip_Apr <- projectRaster(Precip_Apr, crs = target_crs)
+    Precip_Aug <- projectRaster(Precip_Aug, crs = target_crs)
+    Precip_Dec <- projectRaster(Precip_Dec, crs = target_crs)
+    Precip_Feb <- projectRaster(Precip_Feb, crs = target_crs)
+    Precip_Jan <- projectRaster(Precip_Jan, crs = target_crs)
+    Precip_Jul <- projectRaster(Precip_Jul, crs = target_crs)
+    Precip_Jun <- projectRaster(Precip_Jun, crs = target_crs)
+    Precip_Mar <- projectRaster(Precip_Mar, crs = target_crs)
+    Precip_May <- projectRaster(Precip_May, crs = target_crs)
+    Precip_Nov <- projectRaster(Precip_Nov, crs = target_crs)
+    Precip_Sep <- projectRaster(Precip_Sep, crs = target_crs)
+    TMax_Apr <- projectRaster(TMax_Apr, crs = target_crs)
+    TMax_Aug <- projectRaster(TMax_Aug, crs = target_crs)
+    TMax_Dec <- projectRaster(TMax_Dec, crs = target_crs)
+    TMax_Feb <- projectRaster(TMax_Feb, crs = target_crs)
+    TMax_Jan <- projectRaster(TMax_Jan, crs = target_crs)
+    TMax_Jul <- projectRaster(TMax_Jul, crs = target_crs)
+    TMax_Jun <- projectRaster(TMax_Jun, crs = target_crs)
+    TMax_Mar <- projectRaster(TMax_Mar, crs = target_crs)
+    TMax_May <- projectRaster(TMax_May, crs = target_crs)
+    TMax_Nov <- projectRaster(TMax_Nov, crs = target_crs)
+    TMax_Sep <- projectRaster(TMax_Sep, crs = target_crs)
+    TMean_Apr <- projectRaster(TMean_Apr, crs = target_crs)
+    TMean_Aug <- projectRaster(TMean_Aug, crs = target_crs)
+    TMean_Dec <- projectRaster(TMean_Dec, crs = target_crs)
+    TMean_Feb <- projectRaster(TMean_Feb, crs = target_crs)
+    TMean_Jan <- projectRaster(TMean_Jan, crs = target_crs)
+    TMean_Jul <- projectRaster(TMean_Jul, crs = target_crs)
+    TMean_Jun <- projectRaster(TMean_Jun, crs = target_crs)
+    TMean_Mar <- projectRaster(TMean_Mar, crs = target_crs)
+    TMean_May <- projectRaster(TMean_May, crs = target_crs)
+    TMean_Nov <- projectRaster(TMean_Nov, crs = target_crs)
+    TMean_Sep <- projectRaster(TMean_Sep, crs = target_crs)
+    TMin_Apr <- projectRaster(TMin_Apr, crs = target_crs)
+    TMin_Aug <- projectRaster(TMin_Aug, crs = target_crs)
+    TMin_Dec <- projectRaster(TMin_Dec, crs = target_crs)
+    TMin_Feb <- projectRaster(TMin_Feb, crs = target_crs)
+    TMin_Jan <- projectRaster(TMin_Jan, crs = target_crs)
+    TMin_Jul <- projectRaster(TMin_Jul, crs = target_crs)
+    TMin_Jun <- projectRaster(TMin_Jun, crs = target_crs)
+    TMin_Mar <- projectRaster(TMin_Mar, crs = target_crs)
+    TMin_May <- projectRaster(TMin_May, crs = target_crs)
+    TMin_Nov <- projectRaster(TMin_Nov, crs = target_crs)
+    TMin_Sep <- projectRaster(TMin_Sep, crs = target_crs)
+    WindMean_Apr <- projectRaster(WindMean_Apr, crs = target_crs)
+    WindMean_Aug <- projectRaster(WindMean_Aug, crs = target_crs)
+    WindMean_Dec <- projectRaster(WindMean_Dec, crs = target_crs)
+    WindMean_Feb <- projectRaster(WindMean_Feb, crs = target_crs)
+    WindMean_Jan <- projectRaster(WindMean_Jan, crs = target_crs)
+    WindMean_Jul <- projectRaster(WindMean_Jul, crs = target_crs)
+    WindMean_Jun <- projectRaster(WindMean_Jun, crs = target_crs)
+    WindMean_Mar <- projectRaster(WindMean_Mar, crs = target_crs)
+    WindMean_May <- projectRaster(WindMean_May, crs = target_crs)
+    WindMean_Nov <- projectRaster(WindMean_Nov, crs = target_crs)
+    WindMean_Sep <- projectRaster(WindMean_Sep, crs = target_crs)
+    
+    Elevation <- projectRaster(Elevation, crs = target_crs)
+    BltSurfaces <- projectRaster(BltSurfaces, crs = target_crs)
+    PopMean  <- projectRaster(PopMean, crs = target_crs)
+    DstWtrwy <- projectRaster(DstWtrwy, crs = target_crs)
+    nightlight <- projectRaster(nightlight, crs = target_crs)
+    
+  # List of all rasters and their titles
+  rasters <- list(
+    NDVI_Apr = NDVI_Apr,
+    NDVI_Aug = NDVI_Aug,
+    NDVI_Dec = NDVI_Dec,
+    NDVI_Feb = NDVI_Feb,
+    NDVI_Jan = NDVI_Jan,
+    NDVI_Jul = NDVI_Jul,
+    NDVI_Jun = NDVI_Jun,
+    NDVI_Mar = NDVI_Mar,
+    NDVI_May = NDVI_May,
+    NDVI_Nov = NDVI_Nov,
+    NDVI_Sep = NDVI_Sep,
+    Precip_Apr = Precip_Apr,
+    Precip_Aug = Precip_Aug,
+    Precip_Dec = Precip_Dec,
+    Precip_Feb = Precip_Feb,
+    Precip_Jan = Precip_Jan,
+    Precip_Jul = Precip_Jul,
+    Precip_Jun = Precip_Jun,
+    Precip_Mar = Precip_Mar,
+    Precip_May = Precip_May,
+    Precip_Nov = Precip_Nov,
+    Precip_Sep = Precip_Sep,
+    TMean_Apr = TMean_Apr,
+    TMean_Aug = TMean_Aug,
+    TMean_Dec = TMean_Dec,
+    TMean_Feb = TMean_Feb,
+    TMean_Jan = TMean_Jan,
+    TMean_Jul = TMean_Jul,
+    TMean_Jun = TMean_Jun,
+    TMean_Mar = TMean_Mar,
+    TMean_May = TMean_May,
+    TMean_Nov = TMean_Nov,
+    TMean_Sep = TMean_Sep,
+    WindMean_Apr = WindMean_Apr,
+    WindMean_Aug = WindMean_Aug,
+    WindMean_Dec = WindMean_Dec,
+    WindMean_Feb = WindMean_Feb,
+    WindMean_Jan = WindMean_Jan,
+    WindMean_Jul = WindMean_Jul,
+    WindMean_Jun = WindMean_Jun,
+    WindMean_Mar = WindMean_Mar,
+    WindMean_May = WindMean_May,
+    WindMean_Nov = WindMean_Nov,
+    WindMean_Sep = WindMean_Sep,
+    DstWtrwy = DstWtrwy,
+    nightlight = nightlight,
+    Elevation = Elevation,
+    BltSurfaces = BltSurfaces,
+    PopMean = PopMean
+  )
+
+  # Ann means for seasonal vars  
+    calculate_annual_mean <- function(prefix, rasters) {
+      raster_names <- names(rasters)
+      monthly_rasters <- raster_names[grep(prefix, raster_names)]
+      mean_raster <- mean(stack(rasters[monthly_rasters]))
+      return(mean_raster)
+    }
+  
+  # List of prefixes for monthly variables
+    prefixes <- c("NDVI", "Precip", "TMean", "WindMean")
+  
+   # Calculate annual mean rasters
+    target_raster <- rasters$DstWtrwy
+    common_extent <- extent(haitiPolygon)
+    common_resolution <- res(target_raster)
+    
+    # Crop function to crop raster stack to the extent of haitiPolygon
+      crop_to_common_extent <- function(raster_stack, polygon_extent) {
+        cropped_stack <- raster::crop(raster_stack, polygon_extent)
+        return(cropped_stack)
+      }
+
+    # Function to resample raster to common resolution and extent
+      resample_to_common <- function(raster, target_raster) {
+        resampled_raster <- resample(raster, target_raster, method = "bilinear")
+        return(resampled_raster)
+      }
+    raster_layers_resampled <- lapply(rasters, resample_to_common, target_raster = target_raster)  
+    
+    # Function to combine seasonal rasts
+    annual_rasters <- lapply(prefixes, function(prefix) {
+      calculate_annual_mean(prefix, raster_layers_resampled)
+    })
+  
+  # Name the annual mean rasters
+    names(annual_rasters) <- paste0(prefixes, "_Mean")
+
+  # Add other non-monthly rasters to the list
+    additional_rasters <- rasters[c("DstWtrwy", "nightlight", "Elevation", "BltSurfaces", "PopMean")]
+  
+  # Combine all final rasters into a single list
+    Annual_rasters <- c(annual_rasters, additional_rasters)
+  
+  # Create a raster stack of the final rasters
+ 
+    # Raster stack
+      Annual_rasters <- lapply(Annual_rasters, resample_to_common, target_raster = target_raster)
+      Annual_rasters <- stack(Annual_rasters)
+      
+      # Crop the Annual_rasters stack to the extent of haitiPolygon
+        Annual_rasters_cropped <- crop_to_common_extent(Annual_rasters, common_extent)
+
+  
+```
+
+
+
+```{r Freshly downloaded Rasters}
+  library(raster)
+
+  # Colours 
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+  # Plot function
+    plot_minimal <- function(raster, title) {
+      plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+    }
+
+  wind_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/Wind"
+  precip_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/Precip"  
+  TMean_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/TMean"
+  BioClim_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/BioClim"
+  WorldPop_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/WorldPop"
+  GHS_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/GHSBltSurface"
+  NDVI_raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/NDVI"
+  
+  
+  
+  Precip_Jan <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_01.tif"))
+  Precip_Feb <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_02.tif"))
+  Precip_Mar <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_03.tif"))
+  Precip_Apr <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_04.tif"))
+  Precip_May <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_05.tif"))
+  Precip_Jun <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_06.tif"))
+  Precip_Jul <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_07.tif"))
+  Precip_Aug <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_08.tif"))
+  Precip_Sep <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_09.tif"))
+  Precip_Oct <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_10.tif"))
+  Precip_Nov <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_11.tif"))
+  Precip_Dec <- raster(file.path(precip_raster_dir, "wc2.1_30s_prec_12.tif"))
+  TMean_Jan <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_01.tif"))
+  TMean_Feb <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_02.tif"))
+  TMean_Mar <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_03.tif"))
+  TMean_Apr <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_04.tif"))
+  TMean_May <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_05.tif"))
+  TMean_Jun <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_06.tif"))
+  TMean_Jul <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_07.tif"))
+  TMean_Aug <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_08.tif"))
+  TMean_Sep <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_09.tif"))
+  TMean_Oct <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_10.tif"))
+  TMean_Nov <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_11.tif"))
+  TMean_Dec <- raster(file.path(TMean_raster_dir, "wc2.1_30s_tavg_12.tif"))
+  Wind_Jan <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_01.tif"))
+  Wind_Feb <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_02.tif"))
+  Wind_Mar <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_03.tif"))
+  Wind_Apr <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_04.tif"))
+  Wind_May <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_05.tif"))
+  Wind_Jun <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_06.tif"))
+  Wind_Jul <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_07.tif"))
+  Wind_Aug <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_08.tif"))
+  Wind_Sep <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_09.tif"))
+  Wind_Oct <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_10.tif"))
+  Wind_Nov <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_11.tif"))
+  Wind_Dec <- raster(file.path(wind_raster_dir, "wc2.1_30s_wind_12.tif"))
+  
+  MeanTemp <- raster(file.path(BioClim_raster_dir, "wc2.1_30s_bio_1.tif"))
+  
+  Dst_WtrWy <- raster(file.path(WorldPop_raster_dir, "dst_waterway.tif"))
+  Elevation <- raster(file.path(WorldPop_raster_dir, "Elevation.tif"))  
+  NightLights <- raster(file.path(WorldPop_raster_dir, "nightlights.tif"))
+
+  # 72 NDVI Rasters shrunk to 12 monthly and then 1 annual
+    merged_rasters <- list()
+    
+    # Loop through each month
+      for (month in 1:12) {
+        # Initialize an empty list to store the rasters for the current month
+        monthly_rasters <- list()
+        
+        # Loop through the six rasters for the current month
+        for (i in 1:6) {
+          # Calculate the index of the raster (1 to 72)
+          index <- (month - 1) * 6 + i
+          # Construct the filename
+          filename <- sprintf("ha%02dstm.tif", index)
+          # Load the raster
+          raster_layer <- raster(file.path(NDVI_raster_dir, filename))
+          # Add the raster to the list
+          monthly_rasters[[i]] <- raster_layer
+        }
+        
+        # Merge the six rasters for the current month
+        merged_raster <- do.call(merge, monthly_rasters)
+        
+        # Assign the merged raster to a variable for the current month
+        month_name <- month.abb[month]
+        assign(paste0("NDVI_", month_name), merged_raster)
+        
+        # Add the merged raster to the list of merged rasters
+        merged_rasters[[month]] <- merged_raster
+      }
+
+  
+  # Shapefile for crs & mask
+    haiti_shape <- raster::shapefile("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Shapefiles/HaitiPolygon.shp")
+      haiti_wo_lakes <- raster::shapefile("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/Lakes/Haiti_no_Wtrwy.shp")
+
+         
+  # WorldClim Precip  
+    Precip_Jan <- raster::crop(raster::mask(projectRaster(Precip_Jan, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Feb <- raster::crop(raster::mask(projectRaster(Precip_Feb, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Mar <- raster::crop(raster::mask(projectRaster(Precip_Mar, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Apr <- raster::crop(raster::mask(projectRaster(Precip_Apr, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_May <- raster::crop(raster::mask(projectRaster(Precip_May, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Jun <- raster::crop(raster::mask(projectRaster(Precip_Jun, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Jul <- raster::crop(raster::mask(projectRaster(Precip_Jul, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Aug <- raster::crop(raster::mask(projectRaster(Precip_Aug, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Sep <- raster::crop(raster::mask(projectRaster(Precip_Sep, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Oct <- raster::crop(raster::mask(projectRaster(Precip_Oct, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Nov <- raster::crop(raster::mask(projectRaster(Precip_Nov, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Precip_Dec <- raster::crop(raster::mask(projectRaster(Precip_Dec, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+  
+  # WorldClim TMean  
+    TMean_Jan <- raster::crop(raster::mask(projectRaster(TMean_Jan, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Feb <- raster::crop(raster::mask(projectRaster(TMean_Feb, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Mar <- raster::crop(raster::mask(projectRaster(TMean_Mar, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Apr <- raster::crop(raster::mask(projectRaster(TMean_Apr, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_May <- raster::crop(raster::mask(projectRaster(TMean_May, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Jun <- raster::crop(raster::mask(projectRaster(TMean_Jun, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Jul <- raster::crop(raster::mask(projectRaster(TMean_Jul, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Aug <- raster::crop(raster::mask(projectRaster(TMean_Aug, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Sep <- raster::crop(raster::mask(projectRaster(TMean_Sep, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Oct <- raster::crop(raster::mask(projectRaster(TMean_Oct, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Nov <- raster::crop(raster::mask(projectRaster(TMean_Nov, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    TMean_Dec <- raster::crop(raster::mask(projectRaster(TMean_Dec, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    
+  # WorldClim Wind  
+    Wind_Jan <- raster::crop(raster::mask(projectRaster(Wind_Jan, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Feb <- raster::crop(raster::mask(projectRaster(Wind_Feb, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Mar <- raster::crop(raster::mask(projectRaster(Wind_Mar, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Apr <- raster::crop(raster::mask(projectRaster(Wind_Apr, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_May <- raster::crop(raster::mask(projectRaster(Wind_May, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Jun <- raster::crop(raster::mask(projectRaster(Wind_Jun, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Jul <- raster::crop(raster::mask(projectRaster(Wind_Jul, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Aug <- raster::crop(raster::mask(projectRaster(Wind_Aug, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Sep <- raster::crop(raster::mask(projectRaster(Wind_Sep, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Oct <- raster::crop(raster::mask(projectRaster(Wind_Oct, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Nov <- raster::crop(raster::mask(projectRaster(Wind_Nov, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Wind_Dec <- raster::crop(raster::mask(projectRaster(Wind_Dec, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape) 
+  
+  # WorldPop
+    Dst_WtrWy <- raster::crop(raster::mask(projectRaster(Dst_WtrWy, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    Elevation <- raster::crop(raster::mask(projectRaster(Elevation, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NightLights <- raster::crop(raster::mask(projectRaster(NightLights, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+  
+  # USGS NDVI
+    NDVI_Jan <- raster::crop(raster::mask(projectRaster(NDVI_Jan, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Feb <- raster::crop(raster::mask(projectRaster(NDVI_Feb, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Mar <- raster::crop(raster::mask(projectRaster(NDVI_Mar, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Apr <- raster::crop(raster::mask(projectRaster(NDVI_Apr, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_May <- raster::crop(raster::mask(projectRaster(NDVI_May, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Jun <- raster::crop(raster::mask(projectRaster(NDVI_Jun, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Jul <- raster::crop(raster::mask(projectRaster(NDVI_Jul, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Aug <- raster::crop(raster::mask(projectRaster(NDVI_Aug, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Sep <- raster::crop(raster::mask(projectRaster(NDVI_Sep, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Oct <- raster::crop(raster::mask(projectRaster(NDVI_Oct, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Nov <- raster::crop(raster::mask(projectRaster(NDVI_Nov, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    NDVI_Dec <- raster::crop(raster::mask(projectRaster(NDVI_Dec, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    
+    Wind_AnnMeans <- merge(Wind_Jan, Wind_Feb, Wind_Mar, Wind_Apr, Wind_May, Wind_Jun, Wind_Jul, Wind_Aug, Wind_Sep, Wind_Oct, Wind_Nov, Wind_Dec)
+    Precip_AnnMeans <- merge(Precip_Jan, Precip_Feb, Precip_Mar, Precip_Apr, Precip_May, Precip_Jun, Precip_Jul, Precip_Aug, Precip_Sep, Precip_Oct, Precip_Nov, Precip_Dec)
+    NDVI_AnnMeans <- merge(NDVI_Jan, NDVI_Feb, NDVI_Mar, NDVI_Apr, NDVI_May, NDVI_Jun, NDVI_Jul, NDVI_Aug, NDVI_Sep, NDVI_Oct, NDVI_Nov, NDVI_Dec)
+
+    # BioClim (annual means of temp and precip)
+    MeanTemp <- raster::crop(raster::mask(projectRaster(MeanTemp, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+
+    MeanWind <- raster::crop(raster::mask(projectRaster(Wind_AnnMeans, crs = haiti_shape), haiti_shape, updatevalue = NA), haiti_shape)
+    MeanPrecip <- raster::crop(raster::mask(projectRaster(Precip_AnnMeans, crs = haiti_shape), haiti_shape, updatevalue = NA), haiti_shape)
+    NDVI_AnnMeans <- raster::crop(raster::mask(projectRaster(NDVI_AnnMeans, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    
+    
+    MeanTemp <- setExtent(MeanTemp, haiti_shape)
+    MeanPrecip <- setExtent(MeanPrecip, haiti_shape)
+    Dst_WtrWy <- setExtent(Dst_WtrWy, haiti_shape)
+    Elevation <- setExtent(Elevation, haiti_shape)
+    NightLights <- setExtent(NightLights, haiti_shape)
+    MeanWind <- setExtent(MeanWind, haiti_shape)
+    NDVI_AnnMeans <- setExtent(NDVI_AnnMeans, haiti_shape)
+  
+  # List of all the rasters
+    precip_rasters <- stack(Precip_Jan, Precip_Feb, Precip_Mar, Precip_Apr, Precip_May, Precip_Jun,
+                           Precip_Jul, Precip_Aug, Precip_Sep, Precip_Oct, Precip_Nov, Precip_Dec)
+  
+    tmean_rasters <- stack(TMean_Jan, TMean_Feb, TMean_Mar, TMean_Apr, TMean_May, TMean_Jun,
+                          TMean_Jul, TMean_Aug, TMean_Sep, TMean_Oct, TMean_Nov, TMean_Dec)
+    
+    wind_rasters <- stack(Wind_Jan, Wind_Feb, Wind_Mar, Wind_Apr, Wind_May, Wind_Jun,
+                         Wind_Jul, Wind_Aug, Wind_Sep, Wind_Oct, Wind_Nov, Wind_Dec)
+    
+    NDVI_rasters <- stack(NDVI_Jan, NDVI_Feb, NDVI_Mar, NDVI_Apr, NDVI_May, NDVI_Jun, 
+                         NDVI_Jul, NDVI_Aug, NDVI_Sep, NDVI_Oct, NDVI_Nov, NDVI_Dec)
+    
+    Site_rasters <- stack(Dst_WtrWy, Elevation, NightLights)
+    
+  
+      # Resampling
+        rasters_to_resample <- list(MeanPrecip, Dst_WtrWy, Elevation, NightLights, MeanWind, NDVI_AnnMeans)
+      
+      # Function to resample, crop, and mask rasters
+        resample_crop_mask <- function(r, target_raster, shape) {
+          resampled_raster <- resample(r, target_raster, method = "bilinear")
+          cropped_raster <- crop(resampled_raster, shape)
+          masked_raster <- mask(cropped_raster, shape)
+          return(masked_raster)
+        }
+      
+      # Apply the function to each raster
+        resampled_rasters <- lapply(rasters_to_resample, resample_crop_mask, target_raster = MeanTemp, shape = haiti_shape)
+      
+      # Combine MeanTemp (also cropped and masked) with the resampled rasters# Combine MeanTemp (also cropped ahaiti_shapend masked) with the resampled rasters
+        MeanTemp_cropped_masked <- mask(crop(MeanTemp, haiti_shape), haiti_shape)
+        
+        
+      # Create a raster stack
+        raster_stack <- stack(resampled_rasters)
+        plot_minimal(raster_stack)
+
+      
+      # Create a raster stack w/ correct names
+        Pred_rasters <- stack()
+        Pred_rasters$nightlight <- raster_stack$nightlights
+        Pred_rasters$TMean <- raster_stack$wc2.1_30s_bio_1
+        Pred_rasters$Precip <- raster_stack$layer.1
+        Pred_rasters$WindMean <- raster_stack$layer.2
+        Pred_rasters$NDVI <- raster_stack$layer.3
+        Pred_rasters$Elevation <- raster_stack$Elevation
+        
+        Haiti_Rasters <- stack()
+        Haiti_Rasters <- raster::crop(raster::mask(projectRaster(Pred_rasters, crs = haiti_wo_lakes), haiti_wo_lakes, updatevalue=NA), haiti_wo_lakes)
+        
+        Haiti_rasts <- stack()
+        Haiti_rasts$nightlight <- Haiti_Rasters$nightlight
+        Haiti_rasts$TMean <- Haiti_Rasters$TMean       
+        Haiti_rasts$Precip  <- Haiti_Rasters$Precip    
+        Haiti_rasts$WindMean <- Haiti_Rasters$WindMean
+        Haiti_rasts$Elevation <- Haiti_Rasters$Elevation
+        
+        
+  # Higher Res Rasters
+        
+    # Resampling
+      rasters_to_resample <- list(MeanPrecip, Dst_WtrWy, MeanTemp, NightLights, MeanWind, NDVI_AnnMeans)
+    
+    # Function to resample, crop, and mask rasters
+      resample_crop_mask <- function(r, target_raster, shape) {
+        resampled_raster <- resample(r, target_raster, method = "bilinear")
+        cropped_raster <- crop(resampled_raster, shape)
+        masked_raster <- mask(cropped_raster, shape)
+        return(masked_raster)
+      }
+    
+    # Apply the function to each raster
+      resampled_fresh <- lapply(rasters_to_resample, resample_crop_mask, target_raster = Elevation, shape = haiti_shape)
+    
+    # Combine Elevation (also cropped and masked) with the resampled rasters
+      Elevation_cropped_masked <- mask(crop(Elevation, haiti_shape), haiti_shape)        
+      resampled_fresh <- c(list(Elevation_cropped_masked), resampled_fresh)
+      
+    # Create a raster stack
+      raster_stack_highres <- stack(resampled_fresh)
+      plot_minimal(raster_stack_highres)
+      
+    # Create a raster stack w/ correct names
+        rasts_hr <- stack()
+        rasts_hr$nightlight <- raster_stack$nightlights
+        rasts_hr$TMean <- raster_stack$wc2.1_30s_bio_1
+        rasts_hr$Precip <- raster_stack$layer.1
+        rasts_hr$WindMean <- raster_stack$layer.2
+        rasts_hr$Elevation <- raster_stack$Elevation
+        plot_minimal(rasts_hr)
+        
+    # Crop out lakes
+      rasts_hr <- raster::crop(raster::mask(projectRaster(rasts_hr, crs = haiti_wo_lakes), haiti_wo_lakes, updatevalue=NA), haiti_wo_lakes)
+      plot_minimal(rasts_hr)
+        
+```
+
+
+
+```{r Resampling monthly rasters to create monthly stacks}
+
+  # Define the target raster and shape
+    target_raster <- MeanTemp
+    
+
+  # List of all the monthly rasters
+    precip_rasters <- stack(Precip_Jan, Precip_Feb, Precip_Mar, Precip_Apr, Precip_May, Precip_Jun,
+                            Precip_Jul, Precip_Aug, Precip_Sep, Precip_Oct, Precip_Nov, Precip_Dec)
+    
+    tmean_rasters <- stack(TMean_Jan, TMean_Feb, TMean_Mar, TMean_Apr, TMean_May, TMean_Jun,
+                           TMean_Jul, TMean_Aug, TMean_Sep, TMean_Oct, TMean_Nov, TMean_Dec)
+    
+    wind_rasters <- stack(Wind_Jan, Wind_Feb, Wind_Mar, Wind_Apr, Wind_May, Wind_Jun,
+                          Wind_Jul, Wind_Aug, Wind_Sep, Wind_Oct, Wind_Nov, Wind_Dec)
+    
+    ndvi_rasters <- stack(NDVI_Jan, NDVI_Feb, NDVI_Mar, NDVI_Apr, NDVI_May, NDVI_Jun,
+                          NDVI_Jul, NDVI_Aug, NDVI_Sep, NDVI_Oct, NDVI_Nov, NDVI_Dec)
+    
+    site_rasters <- stack(Elevation, NightLights)
+
+  # Function to resample, crop, and mask rasters
+    resample_crop_mask <- function(r, target_raster, shape) {
+      resampled_raster <- resample(r, target_raster, method = "bilinear")
+      cropped_raster <- crop(resampled_raster, shape)
+      masked_raster <- mask(cropped_raster, shape)
+      return(masked_raster)
+    }
+
+  # Apply the function to each raster in the monthly stacks
+    resampled_precip_rasters <- stack(lapply(unstack(precip_rasters), resample_crop_mask, target_raster = target_raster, shape = haiti_shape))
+    resampled_tmean_rasters <- stack(lapply(unstack(tmean_rasters), resample_crop_mask, target_raster = target_raster, shape = haiti_shape))
+    resampled_wind_rasters <- stack(lapply(unstack(wind_rasters), resample_crop_mask, target_raster = target_raster, shape = haiti_shape))
+
+  # Resample site-specific rasters
+    resampled_dst_wtrwy <- resample_crop_mask(Dst_WtrWy, target_raster, haiti_shape)
+    resampled_elevation <- resample_crop_mask(Elevation, target_raster, haiti_shape)
+    resampled_nightlights <- resample_crop_mask(NightLights, target_raster, haiti_shape)
+
+  # Create monthly stacks
+    raster_stack_Jan <- stack(resampled_precip_rasters[[1]], resampled_tmean_rasters[[1]], resampled_wind_rasters[[1]], resampled_elevation, resampled_nightlights)
+    raster_stack_Feb <- stack(resampled_precip_rasters[[2]], resampled_tmean_rasters[[2]], resampled_wind_rasters[[2]], resampled_elevation, resampled_nightlights)
+    raster_stack_Mar <- stack(resampled_precip_rasters[[3]], resampled_tmean_rasters[[3]], resampled_wind_rasters[[3]], resampled_elevation, resampled_nightlights)
+    raster_stack_Apr <- stack(resampled_precip_rasters[[4]], resampled_tmean_rasters[[4]], resampled_wind_rasters[[4]], resampled_elevation, resampled_nightlights)
+    raster_stack_May <- stack(resampled_precip_rasters[[5]], resampled_tmean_rasters[[5]], resampled_wind_rasters[[5]], resampled_elevation, resampled_nightlights)
+    raster_stack_Jun <- stack(resampled_precip_rasters[[6]], resampled_tmean_rasters[[6]], resampled_wind_rasters[[6]], resampled_elevation, resampled_nightlights)
+    raster_stack_Jul <- stack(resampled_precip_rasters[[7]], resampled_tmean_rasters[[7]], resampled_wind_rasters[[7]], resampled_elevation, resampled_nightlights)
+    raster_stack_Aug <- stack(resampled_precip_rasters[[8]], resampled_tmean_rasters[[8]], resampled_wind_rasters[[8]], resampled_elevation, resampled_nightlights)
+    raster_stack_Sep <- stack(resampled_precip_rasters[[9]], resampled_tmean_rasters[[9]], resampled_wind_rasters[[9]], resampled_elevation, resampled_nightlights)
+    raster_stack_Oct <- stack(resampled_precip_rasters[[10]], resampled_tmean_rasters[[10]], resampled_wind_rasters[[10]], resampled_elevation, resampled_nightlights)
+    raster_stack_Nov <- stack(resampled_precip_rasters[[11]], resampled_tmean_rasters[[11]], resampled_wind_rasters[[11]], resampled_elevation, resampled_nightlights)
+    raster_stack_Dec <- stack(resampled_precip_rasters[[12]], resampled_tmean_rasters[[12]], resampled_wind_rasters[[12]], resampled_elevation, resampled_nightlights)
+
+  # Cut the lakes    
+    crop_mask_stack <- function(raster_stack, shape) {
+      # Apply the cropping and masking to each layer in the stack
+      processed_stack <- stack(lapply(unstack(raster_stack), function(r) {
+        masked_raster <- mask(r, shape, updatevalue = NA)
+        cropped_raster <- crop(masked_raster, shape)
+        return(cropped_raster)
+      }))
+      return(processed_stack)
+    }
+    
+  # Apply the cropping and masking function to each monthly stack
+    raster_stack_Jan <- crop_mask_stack(raster_stack_Jan, haiti_wo_lakes)
+    raster_stack_Feb <- crop_mask_stack(raster_stack_Feb, haiti_wo_lakes)
+    raster_stack_Mar <- crop_mask_stack(raster_stack_Mar, haiti_wo_lakes)
+    raster_stack_Apr <- crop_mask_stack(raster_stack_Apr, haiti_wo_lakes)
+    raster_stack_May <- crop_mask_stack(raster_stack_May, haiti_wo_lakes)
+    raster_stack_Jun <- crop_mask_stack(raster_stack_Jun, haiti_wo_lakes)
+    raster_stack_Jul <- crop_mask_stack(raster_stack_Jul, haiti_wo_lakes)
+    raster_stack_Aug <- crop_mask_stack(raster_stack_Aug, haiti_wo_lakes)
+    raster_stack_Sep <- crop_mask_stack(raster_stack_Sep, haiti_wo_lakes)
+    raster_stack_Oct <- crop_mask_stack(raster_stack_Oct, haiti_wo_lakes)
+    raster_stack_Nov <- crop_mask_stack(raster_stack_Nov, haiti_wo_lakes)
+    raster_stack_Dec <- crop_mask_stack(raster_stack_Dec, haiti_wo_lakes)
+    
+    
+    
+  # Rename layers in each monthly stack
+    rename_layers <- function(raster_stack) {
+      new_names <- c("Precip", "TMean", "WindMean", "Elevation", "nightlight")
+      names(raster_stack) <- new_names
+      return(raster_stack)
+    }
+
+    raster_stack_Jan <- rename_layers(raster_stack_Jan)
+    raster_stack_Feb <- rename_layers(raster_stack_Feb)
+    raster_stack_Mar <- rename_layers(raster_stack_Mar)
+    raster_stack_Apr <- rename_layers(raster_stack_Apr)
+    raster_stack_May <- rename_layers(raster_stack_May)
+    raster_stack_Jun <- rename_layers(raster_stack_Jun)
+    raster_stack_Jul <- rename_layers(raster_stack_Jul)
+    raster_stack_Aug <- rename_layers(raster_stack_Aug)
+    raster_stack_Sep <- rename_layers(raster_stack_Sep)
+    raster_stack_Oct <- rename_layers(raster_stack_Oct)
+    raster_stack_Nov <- rename_layers(raster_stack_Nov)
+    raster_stack_Dec <- rename_layers(raster_stack_Dec)
+  
+  # Verify the renaming using plot_minimal
+    plot_minimal(raster_stack_Jan)
+    plot_minimal(raster_stack_Feb)
+    plot_minimal(raster_stack_Mar)
+    plot_minimal(raster_stack_Apr)
+    plot_minimal(raster_stack_May)
+    plot_minimal(raster_stack_Jun)
+    plot_minimal(raster_stack_Jul)
+    plot_minimal(raster_stack_Aug)
+    plot_minimal(raster_stack_Sep)
+    plot_minimal(raster_stack_Oct)
+    plot_minimal(raster_stack_Nov)
+    plot_minimal(raster_stack_Dec)
+    
+```
+
+
+
+```{r Maps of Used Rasters}
+
+  # Define the export directory
+    export_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/"
+
+
+  # Colours 
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+    black_to_yellow <- c("#000000", "#1C1C00", "#383800", "#545400", "#707000", "#8C8C00", "#A8A800", "#C4C400", "#E0E000", "#FFFF00")
+    Orange_to_red <- c("#FFFF00", "#F8E50A", "#F1CB14", "#EAB21E", "#E39828", "#DD7E32", "#D6653C", "#CF4B46", "#C83150", "#C2185B")
+    
+  # Colours for each raster
+    color_schemes <- list(
+      nightlight = black_to_yellow,
+      TMean = Orange_to_red,
+      Precip = colorRampPalette(c("blue", "cyan", "green", "yellow", "red"))(10),
+      WindMean = colorRampPalette(c("lightblue", "blue", "darkblue"))(10),
+      Elevation = rev(terrain.colors(10))
+    )
+    
+  # Titles for each raster
+    titles <- c("Night Lights", "Mean Temperature (°C)", "Precipitation", "Wind Speed", "Elevation")
+    
+  # Plot function
+    plot_covars <- function(raster, title, colors, file_name) {
+      png(filename = file_name, width = 800, height = 600, bg = "transparent")
+      plot(raster, col = colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+      dev.off()
+    }
+
+  
+  # For loop 
+    for (i in 1:nlayers(Haiti_rasts)) {
+      file_name <- paste0(export_dir, titles[i], ".png")
+      plot_covars(Haiti_rasts[[i]], titles[i], color_schemes[[names(Haiti_rasts)[i]]], file_name)
+    }
+  
+  
+
+```
+
+
+
+```{r Monthly CountTime Dataset}
+  library(sf)
+  library(dplyr)
+  library(raster)
+
+  # Select the necessary columns and create a new dataset HCT
+    HCT <- Haiti_CountTime_clean %>%
+      dplyr::select(Date, Location, Latitude, Longitude, Trap_Type, Quinx, Aeae, Aealb)
+
+  # Convert the Date column to a Date type
+    HCT$Date <- as.Date(HCT$Date, format="%Y-%m-%d")
+
+  # Create a new column for Year-Month
+    HCT$YearMonth <- format(HCT$Date, "%Y-%m")
+
+  # Define the UTM CRS (example: UTM Zone 18N)
+    utm_crs <- "+proj=utm +zone=18 +datum=WGS84 +units=m +no_defs"
+
+  # Convert Lat/Lon to UTM
+    HCT_utm <- HCT %>%
+      st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+      st_transform(crs = utm_crs)
+
+  # Extract UTM coordinates
+    utm_coords <- st_coordinates(HCT_utm)
+    HCT <- HCT %>%
+      mutate(UTM_E = utm_coords[,1], UTM_N = utm_coords[,2])
+
+  # Remove the geometry column
+    HCT <- st_drop_geometry(HCT)
+
+  # Extract the additional raster layers from the RasterStack
+    Dst_WtrWy <- Site_rasters$dst_waterway
+    NightLight <- Site_rasters$nightlights
+    Elevation <- Site_rasters$Elevation
+
+  # Helper function to extract raster values with buffer and create the dataset
+    create_HCM_dataset <- function(year_month, month_index, buffer_radius) {
+      dataset <- HCT %>% filter(YearMonth == year_month)
+      coords <- cbind(dataset$UTM_E, dataset$UTM_N)
+      
+      dataset <- dataset %>%
+        mutate(
+          NDVI = raster::extract(NDVI_rasters[[month_index]], coords, buffer = buffer_radius, fun = mean),
+          Precip = raster::extract(precip_rasters[[month_index]], coords),
+          TMean = raster::extract(tmean_rasters[[month_index]], coords),
+          WindMean = raster::extract(wind_rasters[[month_index]], coords),
+          DstWtrwy = raster::extract(Site_rasters[[1]], coords, buffer = buffer_radius, fun = mean),
+          nightlight = raster::extract(Site_rasters[[3]], coords, buffer = buffer_radius, fun = mean),
+          Elevation = raster::extract(Site_rasters[[2]], coords, buffer = buffer_radius, fun = mean)
+        )
+      
+      assign(paste0("HCM_", gsub("-", "_", year_month), "_", buffer_radius), dataset, envir = .GlobalEnv)
+    }
+  
+  # Create the datasets using the month index (1 for Jan, 2 for Feb, etc.) and buffer radii
+    buffer_radii <- c(717, 1134, 5112)
+  
+    for (year_month in unique(HCT$YearMonth)) {
+      month_index <- as.numeric(format(as.Date(paste0(year_month, "-01")), "%m"))
+      create_HCM_dataset(year_month, month_index, buffer_radii[1])
+      create_HCM_dataset(year_month, month_index, buffer_radii[2])
+      create_HCM_dataset(year_month, month_index, buffer_radii[3])
+    }
+  
+  # List of all individual HCM datasets
+    hcm_list_Aeae <- mget(ls(pattern = "_717$"))
+    hcm_list_Aealb <- mget(ls(pattern = "_1134$"))
+    hcm_list_Cxq <- mget(ls(pattern = "_5112$"))
+  
+  # Combine all datasets into one
+    HCM_Full_Aeae <- bind_rows(hcm_list_Aeae)
+    HCM_Full_Aealb <- bind_rows(hcm_list_Aealb)
+    HCM_Full_Cxq <- bind_rows(hcm_list_Cxq)
+
+  # View the full dataset
+    View(HCM_Full_Aeae)
+    View(HCM_Full_Aealb)
+    View(HCM_Full_Cxq)
+  
+```
+
+
+
+```{r Basic Descriptive Stats using HCM}
+library(ggplot2)
+library(ggcorrplot)
+library(dplyr)
+library(corrplot)
+
+HCM_Full_Aeae_renamed <- HCM_Full_Aeae %>%
+  rename(
+    Precipitation = Precip,
+    Temperature = TMean,
+    `Wind Speed` = WindMean,
+    `Night Lights` = nightlight
+  )
+
+# Selecting only the necessary columns for the correlation matrix
+cor_data <- HCM_Full_Aeae_renamed %>%
+  select(Precipitation, Temperature, `Wind Speed`, `Night Lights`, Elevation)
+
+# Selecting only the necessary columns for the correlation matrix
+cor_data <- HCM_Full_Aeae_renamed %>%
+  select(Precipitation, Temperature, `Wind Speed`, `Night Lights`, Elevation)
+
+# Calculating the correlation matrix
+cor_matrix <- cor(cor_data, use = "complete.obs")
+
+# Define the custom color ramp palette from yellow to pink
+yellow_pink_colors <- c("#FFF44A", "#FF9D82", "#FF769F", "#FF51BD")
+
+# Plotting the correlation matrix using ggcorrplot with a gradient color scale
+ggcorrplot(cor_matrix, 
+           hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_col = "black", 
+           outline.col = "white", 
+           ggtheme = ggplot2::theme_minimal()) +
+  scale_fill_gradientn(colors = yellow_pink_colors) +
+  ggtitle("Correlation Matrix")
+
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(ggtext)
+
+# Define the path to save the combined plot
+output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Plots"
+
+# Define the variables and their respective titles
+variables <- c("Quinx", "Aeae", "Aealb")
+titles <- c(
+  "Counts of *Culex quinquefasciatus*",
+  "Counts of *Aedes aegypti*",
+  "Counts of *Aedes albopictus*"
+)
+
+# Define the colors for each plot
+colors <- c("lightpink", "orchid", "mediumpurple")
+
+# Define a function to create a histogram with a specific color and title
+create_histogram <- function(data, variable, title, color) {
+  ggplot(data, aes_string(variable)) +
+    geom_histogram(fill = color, color = "black", bins = 30) +
+    labs(title = title, x = variable, y = "Count") +
+    theme_minimal() +
+    theme(
+      plot.title = element_markdown(),
+      plot.background = element_rect(fill = "transparent", color = NA)
+    )
+}
+
+# Create histograms
+histograms <- lapply(seq_along(variables), function(i) {
+  create_histogram(Haiti_CountTime_clean, variables[i], titles[i], colors[i])
+})
+
+# Find the maximum y-axis limit to use the same for all plots
+max_y <- max(sapply(histograms, function(p) {
+  ggplot_build(p)$layout$panel_params[[1]]$y.range[2]
+}))
+
+# Update histograms to have the same y-axis limit
+histograms <- lapply(histograms, function(p) {
+  p + ylim(0, max_y)
+})
+
+# Combine histograms side-by-side
+combined_plot <- grid.arrange(grobs = histograms, ncol = 3)
+
+# Save the combined plot as a PNG with a transparent background
+ggsave(
+  filename = file.path(output_path, "combined_histograms.png"),
+  plot = combined_plot,
+  device = "png",
+  bg = "transparent",
+  width = 24,  # Adjust width as needed
+  height = 8,  # Adjust height as needed
+  units = "in"
+)
+
+# Save individual histograms as PNGs with transparent backgrounds
+for (i in seq_along(histograms)) {
+  ggsave(
+    filename = file.path(output_path, paste0(variables[i], "_histogram.png")),
+    plot = histograms[[i]],
+    device = "png",
+    bg = "transparent",
+    width = 8,  # Adjust width as needed
+    height = 8,  # Adjust height as needed
+    units = "in"
+  )
+}
+
+# Load necessary libraries
+library(dplyr)
+library(kableExtra)
+
+# Summary statistics calculation
+summary_table <- Haiti_CountTime_clean %>%
+  group_by(Trap_Type) %>%
+  summarise(
+    Total_Aedes_aegypti = sum(Aeae),
+    Mean_Aedes_aegypti = round(mean(Aeae), 2),
+    Median_Aedes_aegypti = round(median(Aeae), 2),
+    Total_Aedes_albopictus = sum(Aealb),
+    Mean_Aedes_albopictus = round(mean(Aealb), 2),
+    Median_Aedes_albopictus = round(median(Aealb), 2),
+    Total_Culex_quinquefasciatus = sum(Quinx),
+    Mean_Culex_quinquefasciatus = round(mean(Quinx), 2),
+    Median_Culex_quinquefasciatus = round(median(Quinx), 2)
+  )
+
+# Calculate overall totals, means, and medians
+total_row <- Haiti_CountTime_clean %>%
+  summarise(
+    Trap_Type = "Total",
+    Total_Aedes_aegypti = sum(Aeae),
+    Mean_Aedes_aegypti = round(mean(Aeae), 2),
+    Median_Aedes_aegypti = round(median(Aeae), 2),
+    Total_Aedes_albopictus = sum(Aealb),
+    Mean_Aedes_albopictus = round(mean(Aealb), 2),
+    Median_Aedes_albopictus = round(median(Aealb), 2),
+    Total_Culex_quinquefasciatus = sum(Quinx),
+    Mean_Culex_quinquefasciatus = round(mean(Quinx), 2),
+    Median_Culex_quinquefasciatus = round(median(Quinx), 2)
+  )
+
+# Combine summary table with total row
+final_table <- bind_rows(summary_table, total_row)
+
+# Create a beautiful table
+kable(final_table, format = "html", escape = FALSE, col.names = c(
+  "Trap Type", 
+  "Total", "Mean", "Median", 
+  "Total", "Mean", "Median",
+  "Total", "Mean", "Median"
+)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = F) %>%
+  add_header_above(c(" " = 1, 
+                     "<i>Aedes aegypti</i>" = 3, 
+                     "<i>Aedes albopictus</i>" = 3, 
+                     "<i>Culex quinquefasciatus</i>" = 3), escape = FALSE) %>%
+  row_spec(nrow(final_table), bold = TRUE, background = "lightgray")
+
+```
+
+
+
+```{r Making graphs of counts across time}
+  library(viridis)
+  library(gridExtra)
+  library(dplyr)
+  library(knitr)
+  library(kableExtra)
+
+  # Convert Date to Date type
+    Haiti_CountTime_clean$Date <- as.Date(Haiti_CountTime_clean$Date)
+  
+  # Extract month and year for aggregation
+    Haiti_CountTime_clean <- Haiti_CountTime_clean %>%
+      mutate(YearMonth = format(Date, "%Y-%m")) 
+    
+  # Aggregate data by month for each mosquito type
+    monthly_counts <- Haiti_CountTime_clean %>%
+      group_by(YearMonth) %>%
+      summarise(
+        Quinx = sum(Quinx, na.rm = TRUE),
+        Aeae = sum(Aeae, na.rm = TRUE),
+        Aealb = sum(Aealb, na.rm = TRUE)
+      )
+  
+  # Convert YearMonth back to Date for plotting
+    monthly_counts$YearMonth <- as.Date(paste0(monthly_counts$YearMonth, "-01"))
+  
+
+  # Plotting the data
+    plot <- ggplot(data = monthly_counts, aes(x = YearMonth)) +
+      geom_line(aes(y = Quinx, color = "Quinx")) +
+      geom_line(aes(y = Aeae, color = "Aeae")) +
+      geom_line(aes(y = Aealb, color = "Aealb")) +
+      labs(
+        title = "Monthly Mosquito Counts",
+        x = "Month",
+        y = "Count",
+        color = "Mosquito Type"
+      ) +
+      theme_minimal() +
+      scale_color_manual(
+        values = c("Quinx" = "darkmagenta", "Aeae" = "coral1", "Aealb" = "goldenrod"),
+        labels = c("Quinx" = expression(italic("Culex quinquefasciatus")),
+                   "Aeae" = expression(italic("Aedes aegypti")),
+                   "Aealb" = expression(italic("Aedes albopictus")))
+      )
+
+    ggsave(
+    filename = "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Monthly Counts of All Three Species.png",
+    plot = plot,
+    width = 10,
+    height = 6,
+    dpi = 300
+  )
+
+    # Plotting the data as side-by-side bar plots
+      ggplot(data = monthly_counts, aes(x = YearMonth)) +
+        geom_bar(aes(y = Quinx, fill = "Quinx"), stat = "identity", position = "dodge") +
+        geom_bar(aes(y = Aeae, fill = "Aeae"), stat = "identity", position = "dodge") +
+        geom_bar(aes(y = Aealb, fill = "Aealb"), stat = "identity", position = "dodge") +
+        labs(
+          title = "Monthly Mosquito Counts",
+          x = "Month",
+          y = "Count",
+          fill = "Mosquito Type"
+        ) +
+        theme_minimal() +
+        scale_fill_manual(
+          values = c("Quinx" = "darkmagenta", "Aeae" = "coral1", "Aealb" = "goldenrod"),
+          labels = c("Quinx" = expression(italic("Culex quinquefasciatus")),
+                     "Aeae" = expression(italic("Aedes aegypti")),
+                     "Aealb" = expression(italic("Aedes albopictus")))
+        )
+
+
+
+  # Plotting the data as side-by-side bar plots
+  # Convert data to long format
+  monthly_counts_long <- monthly_counts %>%
+    pivot_longer(cols = c(Quinx, Aeae, Aealb), names_to = "Species", values_to = "Count")
+  
+  ggplot(data = monthly_counts_long, aes(x = YearMonth, y = Count, fill = Species)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    labs(
+      title = "Monthly Mosquito Counts",
+      x = "Month",
+      y = "Count",
+      fill = "Mosquito Type"
+    ) +
+    theme_minimal() +
+    scale_fill_manual(
+      values = c("Quinx" = "darkmagenta", "Aeae" = "coral1", "Aealb" = "goldenrod"),
+      labels = c("Quinx" = expression(italic("Culex quinquefasciatus")),
+                 "Aeae" = expression(italic("Aedes aegypti")),
+                 "Aealb" = expression(italic("Aedes albopictus")))
+    )
+
+  # Create individual plots for each species
+  plot_quinx <- ggplot(data = monthly_counts, aes(x = YearMonth, y = Quinx)) +
+    geom_bar(stat = "identity", fill = "darkmagenta") +
+    labs(
+      title = expression(italic("Culex quinquefasciatus")),
+      x = "Month",
+      y = "Count"
+    ) +
+    theme_minimal()
+  
+  plot_aeae <- ggplot(data = monthly_counts, aes(x = YearMonth, y = Aeae)) +
+    geom_bar(stat = "identity", fill = "coral1") +
+    labs(
+      title = expression(italic("Aedes aegypti")),
+      x = "Month",
+      y = "Count"
+    ) +
+    theme_minimal()
+  
+  plot_aealb <- ggplot(data = monthly_counts, aes(x = YearMonth, y = Aealb)) +
+    geom_bar(stat = "identity", fill = "goldenrod") +
+    labs(
+      title = expression(italic("Aedes albopictus")),
+      x = "Month",
+      y = "Count"
+    ) +
+    theme_minimal()
+
+  # Arrange the plots side by side
+  grid.arrange(plot_quinx, plot_aeae, plot_aealb, ncol = 3)
+  
+  # Extract month and year for aggregation
+  Haiti_CountTime_clean <- Haiti_CountTime_clean %>%
+    mutate(YearMonth = format(Date, "%Y-%m"))
+  
+  # Summary statistics calculation
+  summary_table <- Haiti_CountTime_clean %>%
+    group_by(YearMonth) %>%
+    summarise(
+      Total_Aedes_aegypti = sum(Aeae, na.rm = TRUE),
+      Mean_Aedes_aegypti = round(mean(Aeae, na.rm = TRUE), 2),
+      Median_Aedes_aegypti = round(median(Aeae, na.rm = TRUE), 2),
+      Total_Aedes_albopictus = sum(Aealb, na.rm = TRUE),
+      Mean_Aedes_albopictus = round(mean(Aealb, na.rm = TRUE), 2),
+      Median_Aedes_albopictus = round(median(Aealb, na.rm = TRUE), 2),
+      Total_Culex_quinquefasciatus = sum(Quinx, na.rm = TRUE),
+      Mean_Culex_quinquefasciatus = round(mean(Quinx, na.rm = TRUE), 2),
+      Median_Culex_quinquefasciatus = round(median(Quinx, na.rm = TRUE), 2)
+    )
+  
+  # Calculate overall totals, means, and medians
+  total_row <- Haiti_CountTime_clean %>%
+    summarise(
+      YearMonth = "Total",
+      Total_Aedes_aegypti = sum(Aeae, na.rm = TRUE),
+      Mean_Aedes_aegypti = round(mean(Aeae, na.rm = TRUE), 2),
+      Median_Aedes_aegypti = round(median(Aeae, na.rm = TRUE), 2),
+      Total_Aedes_albopictus = sum(Aealb, na.rm = TRUE),
+      Mean_Aedes_albopictus = round(mean(Aealb, na.rm = TRUE), 2),
+      Median_Aedes_albopictus = round(median(Aealb, na.rm = TRUE), 2),
+      Total_Culex_quinquefasciatus = sum(Quinx, na.rm = TRUE),
+      Mean_Culex_quinquefasciatus = round(mean(Quinx, na.rm = TRUE), 2),
+      Median_Culex_quinquefasciatus = round(median(Quinx, na.rm = TRUE), 2)
+    )
+  
+  # Combine summary table with total row
+  final_table <- bind_rows(summary_table, total_row)
+  
+  # Create a beautiful table
+  kable(final_table, format = "html", escape = FALSE, col.names = c(
+    "Month", 
+    "Total", "Mean", "Median", 
+    "Total", "Mean", "Median",
+    "Total", "Mean", "Median"
+  )) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                  full_width = F) %>%
+    add_header_above(c(" " = 1, 
+                       "<i>Aedes aegypti</i>" = 3, 
+                       "<i>Aedes albopictus</i>" = 3, 
+                       "<i>Culex quinquefasciatus</i>" = 3), escape = FALSE) %>%
+    row_spec(nrow(final_table), bold = TRUE, background = "lightgray")
+```
+
+
+
+
+```{r Dredging using fresh rasts}
+  library(MuMIn)
+  library(parallel)
+  library(countreg)
+
+
+  # Fit the global hurdle models
+    Glob.Hurd.Aeae <- hurdle(
+      Aeae ~ Precip + TMean + WindMean + nightlight + Elevation | Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Glob.Hurd.Aealb <- hurdle(
+      Aealb ~ Precip + TMean + WindMean + nightlight + Elevation | Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Glob.Hurd.Quinx <- hurdle(
+      Quinx ~ Precip + TMean + WindMean + nightlight + Elevation | Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(sp)
+      library(parallel)
+    })
+    clusterExport(cl, list("HCM_Full_Aeae", "HCM_Full_Aealb", "HCM_Full_Cxq",  "Glob.Hurd.Aeae", "Glob.Hurd.Aealb", "Glob.Hurd.Quinx"))
+
+  # Perform the dredge operation with parallel processing for all three models
+    Dredge.Aeae <- dredge(Glob.Hurd.Aeae, cluster = "cl", trace = TRUE)
+    Dredge.Aealb <- dredge(Glob.Hurd.Aealb, cluster = "cl", trace = TRUE)
+    Dredge.Quinx <- dredge(Glob.Hurd.Quinx, cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+  
+  # "Best" Aeae Model
+    Aeae_Top10 <- get.models(Dredge.Aeae, subset = 1:10)
+    View(Aeae_Top10)
+
+  # "Best" Aealb Model
+    Aealb_Top10 <- get.models(Dredge.Aealb, subset = 1:10)
+    View(Aealb_Top10)
+    
+  # "Best" Quinx Model
+    Quinx_Top10 <- get.models(Dredge.Quinx, subset = 1:10)
+    View(Quinx_Top10)
+
+  # Best Model Summaries
+    Dredged.Aeae
+    Dredged.Aealb
+    Dredged.Quinx
+
+    Aeae.Model <- hurdle(
+      Aeae ~ Elevation + nightlight + Precip | Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Aealb.Model <- hurdle(
+      Aealb ~ Elevation + nightlight + Precip + TMean  | Elevation + nightlight + TMean + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Quinx.Model <- hurdle(
+      Quinx ~ TMean | Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+    autoplot.countreg(Aeae.Model)
+    autoplot.countreg(Aealb.Model)
+    autoplot.countreg(Quinx.Model)
+    pscl::pR2(Aeae.Model)
+    pscl::pR2(Aealb.Model)
+    pscl::pR2(Quinx.Model)
+```
+
+
+
+```{r Dredging w/ Trap Type}
+  library(MuMIn)
+  library(parallel)
+  library(countreg)
+
+
+  # Fit the global hurdle models
+    Glob.Hurd.Aeae.Trap <- hurdle(
+      Aeae ~ Precip + TMean + WindMean + nightlight + Elevation + Trap_Type | Precip + TMean + WindMean + nightlight + Elevation + Trap_Type, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Glob.Hurd.Aealb.Trap <- hurdle(
+      Aealb ~ Precip + TMean + WindMean + nightlight + Elevation + Trap_Type | Precip + TMean + WindMean + nightlight + Elevation + Trap_Type, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Glob.Hurd.Quinx.Trap <- hurdle(
+      Quinx ~ Precip + TMean + WindMean + nightlight + Elevation + Trap_Type | Precip + TMean + WindMean + nightlight + Elevation + Trap_Type, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(sp)
+      library(parallel)
+    })
+    clusterExport(cl, list("HCM_Full_Aeae", "HCM_Full_Aealb", "HCM_Full_Cxq",  "Glob.Hurd.Aeae", "Glob.Hurd.Aealb", "Glob.Hurd.Quinx"))
+
+  # Perform the dredge operation with parallel processing for all three models
+    Dredge.Aeae <- dredge(Glob.Hurd.Aeae.Trap, cluster = "cl", trace = TRUE)
+    Dredge.Aealb <- dredge(Glob.Hurd.Aealb.Trap, cluster = "cl", trace = TRUE)
+    Dredge.Quinx <- dredge(Glob.Hurd.Quinx.Trap, cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+  
+  # Obtain Best Models
+    best_model_Aeae <- get.models(Dredge.Aeae, subset = 1)[[1]]
+    best_model_Aealb <- get.models(Dredge.Aealb, subset = 1)[[1]]
+    best_model_Quinx <- get.models(Dredge.Quinx, subset = 1)[[1]]
+  
+  # Print summaries of the best models
+    summary(best_model_Aeae)
+    summary(best_model_Aealb)
+    summary(best_model_Quinx)
+
+    Trap.Aeae.Model <- hurdle(
+      Aeae ~ Trap_Type + Elevation + nightlight + Precip | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Trap.Aealb.Model <- hurdle(
+      Aealb ~ Trap_Type + Elevation + nightlight + Precip + TMean  | Trap_Type + Elevation + nightlight + TMean + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Trap.Quinx.Model <- hurdle(
+      Quinx ~ Trap_Type + TMean | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+
+```
+
+
+
+```{r Dredging Aealb w either rain or temp}
+  library(MuMIn)
+  library(parallel)
+  library(countreg)
+
+
+  # Fit the Temp & Precip Models
+    Hurd.Aealb.Precip <- hurdle(
+      Aealb ~ Trap_Type + Precip + WindMean + nightlight + Elevation | Trap_Type + Precip + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Hurd.Aealb.TMean <- hurdle(
+      Aealb ~ Trap_Type + TMean + WindMean + nightlight + Elevation | Trap_Type + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(sp)
+      library(parallel)
+    })
+    clusterExport(cl, list("HCM_Full_Aeae", "HCM_Full_Aealb", "HCM_Full_Cxq",  "Hurd.Aealb.Precip", "Hurd.Aealb.TMean"))
+
+  # Perform the dredge operation with parallel processing for all three models
+    Dredge.Aealb.Precip <- dredge(Hurd.Aealb.Precip, cluster = "cl", trace = TRUE)
+    Dredge.Aealb.TMean <- dredge(Hurd.Aealb.TMean, cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+
+    
+  # Best Model Summaries
+    best_model_Aealb.Precip <- get.models(Dredge.Aealb.Precip, subset = 1)[[1]]
+    best_model_Aealb.TMean <- get.models(Dredge.Aealb.TMean, subset = 1)[[1]]
+    
+    summary(best_model_Aealb.Precip)
+    summary(best_model_Aealb.TMean)
+
+  # AeAlb Precip w/o Trap
+    Hurd.Aealb.Precip.sTrap <- hurdle(
+      Aealb ~ Precip + WindMean + nightlight + Elevation | Precip + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(sp)
+      library(parallel)
+    })
+    clusterExport(cl, list("HCM_Full_Aealb", "Hurd.Aealb.Precip.sTrap"))
+
+  # Perform the dredge operation with parallel processing for all three models
+    Dredge.Aealb.Precip.sTrap <- dredge(Hurd.Aealb.Precip.sTrap, cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+
+    
+  # Best Model Summaries
+    best_model_Aealb.Precip.sTrap <- get.models(Dredge.Aealb.Precip.sTrap, subset = 1)[[1]]
+    
+    summary(best_model_Aealb.Precip.sTrap)
+
+    
+    Best.Hurd.Aealb.Precip.sTrap <- hurdle(
+      Aealb ~ Elevation + nightlight + Precip | Elevation + nightlight + Precip, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )
+```
+
+
+
+```{r Outputting models}
+  library(broom)
+
+  # Fit the Trap.Aeae.Model
+    Trap.Aeae.Model <- hurdle(
+      Aeae ~ Trap_Type + Elevation + nightlight + Precip | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+  
+  # Extract count model coefficients
+    aeae_count_coefs <- coef(summary(Trap.Aeae.Model))$count
+    aeae_count_estimates <- aeae_count_coefs[, "Estimate"]
+    aeae_count_se <- aeae_count_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for count model
+    aeae_count_exp_betas <- exp(aeae_count_estimates)
+    aeae_count_ci_lower <- exp(aeae_count_estimates - 1.96 * aeae_count_se)
+    aeae_count_ci_upper <- exp(aeae_count_estimates + 1.96 * aeae_count_se)
+  
+  # Create a data frame for count model
+    aeae_count_results <- data.frame(
+      Variable = rownames(aeae_count_coefs),
+      Exp_Beta = aeae_count_exp_betas,
+      CI_Lower = aeae_count_ci_lower,
+      CI_Upper = aeae_count_ci_upper
+    )
+  
+  # Extract zero hurdle model coefficients
+    aeae_zero_coefs <- coef(summary(Trap.Aeae.Model))$zero
+    aeae_zero_estimates <- aeae_zero_coefs[, "Estimate"]
+    aeae_zero_se <- aeae_zero_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for zero hurdle model
+    aeae_zero_exp_betas <- exp(aeae_zero_estimates)
+    aeae_zero_ci_lower <- exp(aeae_zero_estimates - 1.96 * aeae_zero_se)
+    aeae_zero_ci_upper <- exp(aeae_zero_estimates + 1.96 * aeae_zero_se)
+    
+  # Create a data frame for zero hurdle model
+    aeae_zero_results <- data.frame(
+      Variable = rownames(aeae_zero_coefs),
+      Exp_Beta = aeae_zero_exp_betas,
+      CI_Lower = aeae_zero_ci_lower,
+      CI_Upper = aeae_zero_ci_upper
+    )
+  
+  # Combine results into a single data frame
+    aeae_results <- rbind(
+      cbind(Model = "Count", aeae_count_results),
+      cbind(Model = "Zero Hurdle", aeae_zero_results)
+    )
+  
+  # Print the results
+    print(aeae_results)
+  
+  # Save to a CSV file
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Tables"
+    write.csv(aeae_results, file.path(output_dir, "aeae_model_results.csv"), row.names = FALSE)
+  
+  # Fit the Trap.Aealb.Model
+    Trap.Aealb.Model <- hurdle(
+      Aealb ~ Trap_Type + Elevation + nightlight + Precip | Trap_Type + Elevation + nightlight + Precip, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )
+  
+  # Extract count model coefficients
+    aealb_count_coefs <- coef(summary(Trap.Aealb.Model))$count
+    aealb_count_estimates <- aealb_count_coefs[, "Estimate"]
+    aealb_count_se <- aealb_count_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for count model
+    aealb_count_exp_betas <- exp(aealb_count_estimates)
+    aealb_count_ci_lower <- exp(aealb_count_estimates - 1.96 * aealb_count_se)
+    aealb_count_ci_upper <- exp(aealb_count_estimates + 1.96 * aealb_count_se)
+  
+  # Create a data frame for count model
+    aealb_count_results <- data.frame(
+      Variable = rownames(aealb_count_coefs),
+      Exp_Beta = aealb_count_exp_betas,
+      CI_Lower = aealb_count_ci_lower,
+      CI_Upper = aealb_count_ci_upper
+    )
+  
+  # Extract zero hurdle model coefficients
+    aealb_zero_coefs <- coef(summary(Trap.Aealb.Model))$zero
+    aealb_zero_estimates <- aealb_zero_coefs[, "Estimate"]
+    aealb_zero_se <- aealb_zero_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for zero hurdle model
+    aealb_zero_exp_betas <- exp(aealb_zero_estimates)
+    aealb_zero_ci_lower <- exp(aealb_zero_estimates - 1.96 * aealb_zero_se)
+    aealb_zero_ci_upper <- exp(aealb_zero_estimates + 1.96 * aealb_zero_se)
+  
+  # Create a data frame for zero hurdle model
+    aealb_zero_results <- data.frame(
+      Variable = rownames(aealb_zero_coefs),
+      Exp_Beta = aealb_zero_exp_betas,
+      CI_Lower = aealb_zero_ci_lower,
+      CI_Upper = aealb_zero_ci_upper
+    )
+  
+  # Combine results into a single data frame
+    aealb_results <- rbind(
+      cbind(Model = "Count", aealb_count_results),
+      cbind(Model = "Zero Hurdle", aealb_zero_results)
+    )
+  
+  # Print the results
+    print(aealb_results)
+  
+  # Save to a CSV file
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Tables"
+    write.csv(aealb_results, file.path(output_dir, "aealb_model_results.csv"), row.names = FALSE)
+
+  # Fit the Trap.Quinx.Model
+    Trap.Quinx.Model <- hurdle(
+      Quinx ~ Trap_Type + TMean | Trap_Type + Elevation + nightlight + Precip, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+  
+  # Extract count model coefficients
+    quinx_count_coefs <- coef(summary(Trap.Quinx.Model))$count
+    quinx_count_estimates <- quinx_count_coefs[, "Estimate"]
+    quinx_count_se <- quinx_count_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for count model
+    quinx_count_exp_betas <- exp(quinx_count_estimates)
+    quinx_count_ci_lower <- exp(quinx_count_estimates - 1.96 * quinx_count_se)
+    quinx_count_ci_upper <- exp(quinx_count_estimates + 1.96 * quinx_count_se)
+  
+  # Create a data frame for count model
+    quinx_count_results <- data.frame(
+      Variable = rownames(quinx_count_coefs),
+      Exp_Beta = quinx_count_exp_betas,
+      CI_Lower = quinx_count_ci_lower,
+      CI_Upper = quinx_count_ci_upper
+    )
+  
+  # Extract zero hurdle model coefficients
+    quinx_zero_coefs <- coef(summary(Trap.Quinx.Model))$zero
+    quinx_zero_estimates <- quinx_zero_coefs[, "Estimate"]
+    quinx_zero_se <- quinx_zero_coefs[, "Std. Error"]
+  
+  # Calculate exponentiated betas and 95% confidence intervals for zero hurdle model
+    quinx_zero_exp_betas <- exp(quinx_zero_estimates)
+    quinx_zero_ci_lower <- exp(quinx_zero_estimates - 1.96 * quinx_zero_se)
+    quinx_zero_ci_upper <- exp(quinx_zero_estimates + 1.96 * quinx_zero_se)
+  
+  # Create a data frame for zero hurdle model
+    quinx_zero_results <- data.frame(
+      Variable = rownames(quinx_zero_coefs),
+      Exp_Beta = quinx_zero_exp_betas,
+      CI_Lower = quinx_zero_ci_lower,
+      CI_Upper = quinx_zero_ci_upper
+    )
+  
+  # Combine results into a single data frame
+    quinx_results <- rbind(
+      cbind(Model = "Count", quinx_count_results),
+      cbind(Model = "Zero Hurdle", quinx_zero_results)
+    )
+  
+  # Print the results
+    print(quinx_results)
+  
+  # Save to a CSV file
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Tables"
+    write.csv(quinx_results, file.path(output_dir, "quinx_model_results.csv"), row.names = FALSE)
+    
+```
+
+
+
+```{r Model stats}
+    Trap.Aeae.Model <- hurdle(
+      Aeae ~ Trap_Type + Elevation + nightlight + Precip | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Trap.Aealb.Model <- hurdle(
+      Aealb ~ Trap_Type + Elevation + nightlight + Precip + TMean  | Trap_Type + Elevation + nightlight + TMean + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Trap.Quinx.Model <- hurdle(
+      Quinx ~ Trap_Type + TMean | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+
+    Glob.Hurd.Aeae <- hurdle(
+      Aeae ~ Trap_Type + Precip + TMean + WindMean + nightlight + Elevation | Trap_Type + Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    summary(Glob.Hurd.Aeae)
+    
+    Glob.Hurd.Aealb <- hurdle(
+      Aealb ~ Trap_Type + Precip + TMean + WindMean + nightlight + Elevation | Trap_Type + Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Glob.Hurd.Quinx <- hurdle(
+      Quinx ~ Trap_Type + Precip + TMean + WindMean + nightlight + Elevation | Trap_Type + Precip + TMean + WindMean + nightlight + Elevation, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )    
+    summary(Glob.Hurd.Quinx)
+    
+    Zero.Aeae.Model <- hurdle(
+      Aeae ~ 1 | 1, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Zero.Aealb.Model <- hurdle(
+      Aealb ~ 1 | 1, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )
+    Zero.Quinx.Model <- hurdle(
+      Quinx ~ 1 | 1, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+    AIC(Trap.Aeae.Model, Trap.Aealb.Model, Trap.Quinx.Model)
+    BIC(Trap.Aeae.Model, Trap.Aealb.Model, Trap.Quinx.Model)
+    logLik(Trap.Aeae.Model)
+    logLik(Trap.Aealb.Model)
+    logLik(Trap.Quinx.Model)
+    lmtest::lrtest(Trap.Aeae.Model)
+    lmtest::lrtest(Trap.Aealb.Model)
+    lmtest::lrtest(Trap.Quinx.Model)
+    
+    AIC(Zero.Aeae.Model, Zero.Aealb.Model, Zero.Quinx.Model)
+    BIC(Zero.Aeae.Model, Zero.Aealb.Model, Zero.Quinx.Model)
+    logLik(Zero.Aeae.Model)
+    logLik(Zero.Aealb.Model)
+    logLik(Zero.Quinx.Model)
+    
+    lmtest::lrtest(Trap.Aeae.Model, Glob.Hurd.Aeae)
+    lmtest::lrtest(Trap.Aealb.Model, Glob.Hurd.Aealb)    
+    lmtest::lrtest(Trap.Quinx.Model, Glob.Hurd.Quinx)    
+    
+
+    Aealb.Model.TMean <- hurdle(
+      Aealb ~ Trap_Type + Elevation + nightlight + TMean  | Trap_Type + Elevation + nightlight + TMean + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    ) 
+    
+    Aealb.Model.Precip <- hurdle(
+      Aealb ~ Trap_Type + Elevation + nightlight + Precip  | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )
+    AIC(Aealb.Model.TMean, Aealb.Model.Precip)
+    summary(Aealb.Model.Precip)
+    
+    
+```
+
+
+
+```{r Validation of Models using k-fold cross-validation}
+  library(pscl)
+  library(caret)
+  library(dplyr)
+  library(purrr)
+  library(tidyr)
+
+  # Create a new dataset for cross-validation
+    HCM_Full_Aeae_CV <- na.omit(HCM_Full_Aeae_CV)
+  
+  # Identify numeric columns, excluding the factor column 'Trap_Type'
+    numeric_columns <- sapply(HCM_Full_Aeae_CV, is.numeric)
+    set.seed(123)
+    wss <- numeric(15)  # Initialize a vector to hold WSS values
+  
+  # Calculate WSS for k = 1 to 15
+  for (i in 1:30) {
+    km <- kmeans(HCM_Full_Aeae_CV[, numeric_columns], centers = i, nstart = 25)
+    wss[i] <- km$tot.withinss
+  }
+  plot(1:30, wss, type = "b", xlab = "Number of Clusters", ylab = "Within groups sum of squares", main = "Elbow Plot")
+
+
+  # Ensure there are enough rows for clustering
+    if (nrow(HCM_Full_Aeae_CV) < k) {
+      stop("Not enough rows for clustering")
+    }
+
+  # Ensure there are numeric columns available for clustering
+    if (sum(numeric_columns) == 0) {
+      stop("No numeric columns available for clustering")
+    }
+
+  # Perform k-means clustering
+    set.seed(123)  # For reproducibility
+    k <- 6  # Number of clusters, you can choose this based on your requirement
+    clusters <- kmeans(HCM_Full_Aeae_CV[, numeric_columns], centers = k)
+
+  # Add the cluster assignments to the dataset
+    HCM_Full_Aeae_CV$cluster <- clusters$cluster
+    cross_validation_results <- data.frame()
+
+    for (i in 1:k) {
+      # Split the data
+      train_data <- filter(HCM_Full_Aeae_CV, cluster != i)
+      test_data <- filter(HCM_Full_Aeae_CV, cluster == i)
+      
+      # Fit the model on training data
+      model <- hurdle(
+        Aeae ~ Trap_Type + Elevation + nightlight + Precip | Trap_Type + Elevation + nightlight + Precip + WindMean, 
+        data = train_data, 
+        dist = "negbin"
+      )
+  
+  # Predict on test data
+    predictions <- predict(model, newdata = test_data, type = "response")
+  
+  # Calculate performance metric (e.g., Mean Squared Error)
+    mse <- mean((test_data$Aeae - predictions)^2)
+  
+  # Store the result
+    cross_validation_results <- rbind(cross_validation_results, data.frame(cluster = i, mse = mse))
+}
+
+# Calculate average performance metric
+avg_mse <- mean(cross_validation_results$mse)
+
+print(paste("Average MSE across all clusters:", avg_mse))
+
+```
+
+
+
+```{r Predictions using freshly downloaded rasters (Lower Res - Conservative)}
+
+  # Define the Models
+    Aeae.Model <- hurdle(
+      Aeae ~ Elevation + nightlight + Precip | Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Aealb.Model <- hurdle(
+      Aealb ~ Elevation + nightlight + Precip + TMean  | Elevation + nightlight + TMean + WindMean, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Quinx.Model <- hurdle(
+      Quinx ~ TMean | Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+    
+  # Zero Model prediction
+    predict_zero_model <- function(model, raster_stack) {
+      presence_pred <- predict(raster_stack, model, type = "zero")
+    }
+    
+  # Count Model prediction
+    predict_count_model <- function(model, raster_stack) {
+      predict(raster_stack, model, type = "count")
+    }
+    
+  # Full Hurdle Prediction
+    predict_hurdle <- function(model, raster_stack) {
+      predict(raster_stack, model)
+    }
+
+  # Perform predictions for Aedes aegypti
+    Aeae.Pres_pred <- predict_zero_model(Aeae.Model, Haiti_Rasters)
+    Aeae.Hurdle <- predict_hurdle(Aeae.Model, Haiti_Rasters)    
+    
+  # Perform predictions for Aedes albopictus
+    Aealb.Pres_pred <- predict_zero_model.s(Aealb.Model, Haiti_Rasters)
+    Aealb.Hurdle <- predict_hurdle(Aealb.Model, Haiti_Rasters) 
+    
+  # Perform predictions for Culex quinquefasciatus
+    Quinx.Pres_pred <- predict_zero_model(Quinx.Model, Haiti_Rasters)
+    Quinx.Hurdle <- predict_hurdle(Quinx.Model, Haiti_Rasters) 
+    
+  # Plot Rasters
+    
+    # Aedes aegypti
+      plot_minimal(Aeae.Pres_pred)
+      plot_minimal(Aeae.Hurdle)
+      
+    # Aedes albopictus
+      plot_minimal(Aealb.Pres_pred)
+      plot_minimal(Aealb.Hurdle) 
+      
+    # Culex quinquefasciatus
+      plot_minimal(Quinx.Pres_pred)
+      plot_minimal(Quinx.Hurdle)
+      
+```
+
+
+
+```{r Monthly predictions}
+
+  # Define the Models
+    Aeae.Model <- hurdle(
+      Aeae ~ Elevation + nightlight + Precip | Elevation + nightlight + Precip + WindMean, 
+      data = HCM_Full_Aeae, 
+      dist = "negbin"
+    )
+    Aealb.Model <- hurdle(
+      Aealb ~ Elevation + nightlight + Precip | Elevation + nightlight + Precip, 
+      data = HCM_Full_Aealb, 
+      dist = "negbin"
+    )  
+    Quinx.Model <- hurdle(
+      Quinx ~ TMean | Elevation + nightlight + Precip, 
+      data = HCM_Full_Cxq, 
+      dist = "negbin"
+    )
+
+    
+  # Define the monthly raster stacks
+    monthly_raster_stacks <- list(
+      Jan = raster_stack_Jan,
+      Feb = raster_stack_Feb,
+      Mar = raster_stack_Mar,
+      Apr = raster_stack_Apr,
+      May = raster_stack_May,
+      Jun = raster_stack_Jun,
+      Jul = raster_stack_Jul,
+      Aug = raster_stack_Aug,
+      Sep = raster_stack_Sep,
+      Oct = raster_stack_Oct,
+      Nov = raster_stack_Nov,
+      Dec = raster_stack_Dec
+    )
+
+  # Initialize lists to store predictions
+    Aeae_Pres_preds <- list()
+    Aeae_Hurdle_preds <- list()
+    Aealb_Pres_preds <- list()
+    Aealb_Hurdle_preds <- list()
+    Quinx_Pres_preds <- list()
+    Quinx_Hurdle_preds <- list()
+    
+  # Zero Model prediction
+    predict_zero_model <- function(model, raster_stack) {
+      presence_pred <- predict(raster_stack, model, type = "zero")
+    }
+    
+  # Count Model prediction
+    predict_count_model <- function(model, raster_stack) {
+      predict(raster_stack, model, type = "count")
+    }
+    
+  # Full Hurdle Prediction
+    predict_hurdle <- function(model, raster_stack) {
+      predict(raster_stack, model)
+    }
+
+  # Loop through each month to perform predictions
+    for (month in names(monthly_raster_stacks)) {
+      raster_stack <- monthly_raster_stacks[[month]]
+      
+      # Perform predictions for Aedes aegypti
+      Aeae_Pres_preds[[month]] <- predict_zero_model(Aeae.Model, raster_stack)
+      Aeae_Hurdle_preds[[month]] <- predict_hurdle(Aeae.Model, raster_stack)
+      
+      # Perform predictions for Aedes albopictus
+      Aealb_Pres_preds[[month]] <- predict_zero_model(Aealb.Model, raster_stack)
+      Aealb_Hurdle_preds[[month]] <- predict_hurdle(Aealb.Model, raster_stack)
+      
+      # Perform predictions for Culex quinquefasciatus
+      Quinx_Pres_preds[[month]] <- predict_zero_model(Quinx.Model, raster_stack)
+      Quinx_Hurdle_preds[[month]] <- predict_hurdle(Quinx.Model, raster_stack)
+    }
+
+  # Plot predictions for each month
+    plot_predictions <- function(predictions, title_prefix) {
+      for (month in names(predictions)) {
+        plot_minimal(predictions[[month]])
+        title(main = paste0(title_prefix, " - ", month))
+      }
+    }
+
+  # Plot Aedes aegypti predictions
+    plot_predictions(Aeae_Pres_preds, "Aedes aegypti Presence Prediction")
+    plot_predictions(Aeae_Hurdle_preds, "Aedes aegypti Hurdle Prediction")
+  
+  # Plot Aedes albopictus predictions
+    plot_predictions(Aealb_Pres_preds, "Aedes albopictus Presence Prediction")
+    plot_predictions(Aealb_Hurdle_preds, "Aedes albopictus Hurdle Prediction")
+  
+  # Plot Culex quinquefasciatus predictions
+    plot_predictions(Quinx_Pres_preds, "Culex quinquefasciatus Presence Prediction")
+    plot_predictions(Quinx_Hurdle_preds, "Culex quinquefasciatus Hurdle Prediction")
+
+```
+
+
+
+```{r Zonal Stats}
+
+    # Colours 
+      plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+      black_to_yellow <- c("#000000", "#1C1C00", "#383800", "#545400", "#707000", "#8C8C00", "#A8A800", "#C4C400", "#E0E000", "#FFFF00")
+      black_to_grey_to_gold <- c("#000000", "#A9A9A9", "#D3D3D3", "#C0C080", "#C4A000", "#D4AF37", "#E1C16E", "#FFD700")
+        black_to_grey_to_gold20 <- colorRampPalette(black_to_grey_to_gold)(20)
+      Orange_to_red <- c("#FFFF00", "#F8E50A", "#F1CB14", "#EAB21E", "#E39828", "#DD7E32", "#D6653C", "#CF4B46", "#C83150", "#C2185B")
+      
+    # Colours for each raster
+      color_schemes <- list(
+        nightlight = black_to_grey_to_gold,
+        TMean = colorRampPalette(c("#FFFF00", "#C2185B"))(20),
+        Precip = colorRampPalette(c("cyan", "#6A0DAD"))(20),
+        WindMean = colorRampPalette(c("lightblue", "blue", "darkblue"))(20),
+        Elevation = rev(terrain.colors(20))
+      )
+
+
+  # Load shapefiles
+    Haiti_adm2 <- st_read("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Haiti_Shapefiles_Base/hti_admbnda_adm2_cnigs_20181129.shp")
+    Haiti_adm3 <- st_read("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Haiti_Shapefiles_Base/hti_admbnda_adm3_cnigs_20181129.shp")
+
+
+  # Create numeric IDs
+    Haiti_adm2$ID <- as.numeric(as.factor(Haiti_adm2$ADM2_EN))
+    Haiti_adm3$ID <- as.numeric(as.factor(Haiti_adm3$ADM3_EN))
+
+  # List of rasters
+    CountPredRasts <- raster::stack(
+      Aeae_Hurdle_preds,
+      Aealb_Hurdle_preds,
+      Quinx_Hurdle_preds
+    )
+    
+    ZeroPredRasts <- list(
+      Aeae_Pres_preds,
+      Aealb_Pres_preds,
+      Quinx_Pres_preds
+    )
+    
+
+
+  # Function to calculate zonal statistics using exactextractr
+    calculate_zonal_stats <- function(shapefile, raster_list, stat = 'mean') {
+      zonal_stats <- lapply(raster_list, function(rast) {
+        exactextractr::exact_extract(rast, shapefile, stat)
+      })
+      return(zonal_stats)
+    }
+
+  # Calculate zonal statistics for both admin levels
+    zonal_stats_adm3_count <- calculate_zonal_stats(Haiti_adm3, CountPredRasts)
+    zonal_stats_adm3_zero <- calculate_zonal_stats(Haiti_adm3, ZeroPredRasts)
+    zonal_stats_adm3_covars <- calculate_zonal_stats(Haiti_adm3, CovariateRasts)
+
+
+  # Combine results into data frames
+    combine_zonal_stats <- function(zonal_stats_list, shapefile) {
+      combined_df <- do.call(cbind, zonal_stats_list)
+      combined_df <- as.data.frame(combined_df)
+      combined_df$ID <- shapefile$ID
+      return(combined_df)
+    }
+      
+    zonal_stats_adm3_count_df <- combine_zonal_stats(zonal_stats_adm3_count, Haiti_adm3)
+    zonal_stats_adm3_zero_df <- combine_zonal_stats(zonal_stats_adm3_zero, Haiti_adm3)
+    zonal_stats_adm3_covars_df <- combine_zonal_stats(zonal_stats_adm3_covars, Haiti_adm3)
+    
+    # Set column names for clarity
+      colnames(zonal_stats_adm3_count_df) <- c(paste0("Count_HR_mean_", 1:(ncol(zonal_stats_adm3_count_df) - 1)), "ID")
+      colnames(zonal_stats_adm3_zero_df) <- c(paste0("Pres_pred_HR_mean_", 1:(ncol(zonal_stats_adm3_zero_df) - 1)), "ID")
+      colnames(zonal_stats_adm3_covars_df) <- c(paste0("Covar_Mean", 1:(ncol(zonal_stats_adm3_covars_df) - 1)), "ID")
+      
+  # Merge zonal stats with shapefiles
+    Haiti_adm3_count <- merge(Haiti_adm3, zonal_stats_adm3_count_df, by = "ID")
+    Haiti_adm3_zero <- merge(Haiti_adm3, zonal_stats_adm3_zero_df, by = "ID")
+    Haiti_adm3_covars <- merge(Haiti_adm3, zonal_stats_adm3_covars_df, by = "ID")
+    
+  # Function to plot zonal statistics with customizations
+    plot_zonal_stats <- function(shapefile, value_column, title) {
+      ggplot(data = shapefile) +
+        geom_sf(aes_string(fill = value_column), color = NA) +
+        scale_fill_viridis_c(option = "plasma") +
+        theme_minimal() +
+        theme(
+          panel.grid = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_blank()
+        ) +
+        labs(
+          title = title,
+          fill = "Value"
+        ) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "bottom"
+        )
+    }
+    
+    plot_covariate <- function(shapefile, value_column, title, color_scheme) {
+      ggplot(data = shapefile) +
+        geom_sf(aes_string(fill = value_column), color = NA) +
+        scale_fill_gradientn(colors = color_scheme) +
+        theme_minimal() +
+        theme(
+          panel.grid = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_blank()
+        ) +
+        labs(
+          title = title,
+          fill = "Value"
+        ) +
+        theme(
+          plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "bottom"
+        )
+    }
+
+  # Function to create expression titles for species names
+    create_title <- function(species, type) {
+      bquote("Predicted" ~ .(type) ~ "of" ~ italic(.(species)) ~ "in each Communal Section")
+    }
+    
+    # Define titles for each covariate
+      covtitles <- list(
+        MeanPrecip = "Mean Precipitation in each Communal Section (mm per month)",
+        MeanTemp = expression("Mean Temperature in each Communal Section (" * degree * "C)"),
+        NightLights = "Average Lights at Night in each Communal Section (nanoWatts/cm^2/sr)",
+        MeanWind = expression("Average Wind Speed in each Communal Section (m s"^"-1"*")"),
+        Elevation = expression("Average Elevation in each Communal Section (m above sea level)")
+      )
+
+    plot_precip <- plot_covariate(Haiti_adm3_covars, "Covar_Mean_1", covtitles$MeanPrecip, color_schemes$Precip)
+    plot_temp <- plot_covariate(Haiti_adm3_covars, "Covar_Mean_2", covtitles$MeanTemp, color_schemes$TMean)
+    plot_lights <- plot_covariate(Haiti_adm3_covars, "Covar_Mean_3", covtitles$NightLights, color_schemes$nightlight)
+    plot_wind <- plot_covariate(Haiti_adm3_covars, "Covar_Mean_4", covtitles$MeanWind, color_schemes$WindMean)
+    plot_elevation <- plot_covariate(Haiti_adm3_covars, "Covar_Mean_5", covtitles$Elevation, color_schemes$Elevation)
+  
+
+
+  # Function to plot and save covariate maps
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Covariates"
+    plot_and_save_covariate <- function(data, covariate, title, color_scheme, output_filename) {
+      plot <- plot_covariate(data, covariate, title, color_scheme)
+      ggsave(filename = output_filename, plot = plot, path = output_dir, device = "png", width = 8, height = 6, dpi = 300, bg = "transparent")
+    }
+
+  # Plot and save each covariate map with the specified names
+    plot_and_save_covariate(Haiti_adm3_covars, "Covar_Mean_1", covtitles$MeanPrecip, color_schemes$Precip, "Precip.png")
+    plot_and_save_covariate(Haiti_adm3_covars, "Covar_Mean_2", covtitles$MeanTemp, color_schemes$TMean, "Temp.png")
+    plot_and_save_covariate(Haiti_adm3_covars, "Covar_Mean_3", covtitles$NightLights, color_schemes$nightlight, "Lights.png")
+    plot_and_save_covariate(Haiti_adm3_covars, "Covar_Mean_4", covtitles$MeanWind, color_schemes$WindMean, "Wind.png")
+    plot_and_save_covariate(Haiti_adm3_covars, "Covar_Mean_5", covtitles$Elevation, color_schemes$Elevation, "Elevation.png")
+  
+  # Combine plots into a panel
+    library(patchwork)  
+    panel_map <- plot_precip + plot_temp + plot_lights + plot_wind + plot_elevation + 
+      plot_layout(ncol = 3, nrow = 2)
+  
+  # Save the panel map as a high-quality PNG with transparent background
+    ggsave(filename = "panel_map.png", plot = panel_map, path = output_dir, device = "png", width = 16, height = 12, dpi = 300, bg = "transparent")
+
+
+```
+
+
+
+```{r Zonal stat maps for monthly predictions}
+
+  library(ggtext)
+
+  # Lists of rasters with layers labeled by month
+    Aeae_Hurdle_preds <- list(
+      Jan = Aeae_Hurdle_preds$Jan, Feb = Aeae_Hurdle_preds$Feb, Mar = Aeae_Hurdle_preds$Mar,
+      Apr = Aeae_Hurdle_preds$Apr, May = Aeae_Hurdle_preds$May, Jun = Aeae_Hurdle_preds$Jun,
+      Jul = Aeae_Hurdle_preds$Jul, Aug = Aeae_Hurdle_preds$Aug, Sep = Aeae_Hurdle_preds$Sep,
+      Oct = Aeae_Hurdle_preds$Oct, Nov = Aeae_Hurdle_preds$Nov, Dec = Aeae_Hurdle_preds$Dec
+    )
+    
+    Aealb_Hurdle_preds <- list(
+      Jan = Aealb_Hurdle_preds$Jan, Feb = Aealb_Hurdle_preds$Feb, Mar = Aealb_Hurdle_preds$Mar,
+      Apr = Aealb_Hurdle_preds$Apr, May = Aealb_Hurdle_preds$May, Jun = Aealb_Hurdle_preds$Jun,
+      Jul = Aealb_Hurdle_preds$Jul, Aug = Aealb_Hurdle_preds$Aug, Sep = Aealb_Hurdle_preds$Sep,
+      Oct = Aealb_Hurdle_preds$Oct, Nov = Aealb_Hurdle_preds$Nov, Dec = Aealb_Hurdle_preds$Dec
+    )
+    
+    Quinx_Hurdle_preds <- list(
+      Jan = Quinx_Hurdle_preds$Jan, Feb = Quinx_Hurdle_preds$Feb, Mar = Quinx_Hurdle_preds$Mar,
+      Apr = Quinx_Hurdle_preds$Apr, May = Quinx_Hurdle_preds$May, Jun = Quinx_Hurdle_preds$Jun,
+      Jul = Quinx_Hurdle_preds$Jul, Aug = Quinx_Hurdle_preds$Aug, Sep = Quinx_Hurdle_preds$Sep,
+      Oct = Quinx_Hurdle_preds$Oct, Nov = Quinx_Hurdle_preds$Nov, Dec = Quinx_Hurdle_preds$Dec
+    )
+    
+    Aeae_Pres_preds <- list(
+      Jan = Aeae_Pres_preds$Jan, Feb = Aeae_Pres_preds$Feb, Mar = Aeae_Pres_preds$Mar,
+      Apr = Aeae_Pres_preds$Apr, May = Aeae_Pres_preds$May, Jun = Aeae_Pres_preds$Jun,
+      Jul = Aeae_Pres_preds$Jul, Aug = Aeae_Pres_preds$Aug, Sep = Aeae_Pres_preds$Sep,
+      Oct = Aeae_Pres_preds$Oct, Nov = Aeae_Pres_preds$Nov, Dec = Aeae_Pres_preds$Dec
+    )
+    
+    Aealb_Pres_preds <- list(
+      Jan = Aealb_Pres_preds$Jan, Feb = Aealb_Pres_preds$Feb, Mar = Aealb_Pres_preds$Mar,
+      Apr = Aealb_Pres_preds$Apr, May = Aealb_Pres_preds$May, Jun = Aealb_Pres_preds$Jun,
+      Jul = Aealb_Pres_preds$Jul, Aug = Aealb_Pres_preds$Aug, Sep = Aealb_Pres_preds$Sep,
+      Oct = Aealb_Pres_preds$Oct, Nov = Aealb_Pres_preds$Nov, Dec = Aealb_Pres_preds$Dec
+    )
+    
+    Quinx_Pres_preds <- list(
+      Jan = Quinx_Pres_preds$Jan, Feb = Quinx_Pres_preds$Feb, Mar = Quinx_Pres_preds$Mar,
+      Apr = Quinx_Pres_preds$Apr, May = Quinx_Pres_preds$May, Jun = Quinx_Pres_preds$Jun,
+      Jul = Quinx_Pres_preds$Jul, Aug = Quinx_Pres_preds$Aug, Sep = Quinx_Pres_preds$Sep,
+      Oct = Quinx_Pres_preds$Oct, Nov = Quinx_Pres_preds$Nov, Dec = Quinx_Pres_preds$Dec
+    )
+
+  # Combine all rasters in lists
+    CountPredRasts <- list(Aeae_Hurdle_preds, Aealb_Hurdle_preds, Quinx_Hurdle_preds)
+    ZeroPredRasts <- list(Aeae_Pres_preds, Aealb_Pres_preds, Quinx_Pres_preds)
+
+  # Function to calculate zonal statistics using exactextractr
+    calculate_zonal_stats <- function(shapefile, raster_stack_list, stat = 'mean') {
+      zonal_stats <- lapply(raster_stack_list, function(raster_stack) {
+        lapply(raster_stack, function(rast) {
+          exactextractr::exact_extract(rast, shapefile, stat)
+        })
+      })
+      # Flatten the list of lists
+      zonal_stats <- do.call(c, zonal_stats)
+      return(zonal_stats)
+    }
+
+  # Calculate zonal statistics for both admin levels
+    zonal_stats_adm3_count <- calculate_zonal_stats(Haiti_adm3, CountPredRasts)
+    zonal_stats_adm3_zero <- calculate_zonal_stats(Haiti_adm3, ZeroPredRasts)
+
+
+  # Combine results into data frames
+    combine_zonal_stats <- function(zonal_stats_list, shapefile) {
+      combined_df <- do.call(cbind, zonal_stats_list)
+      combined_df <- as.data.frame(combined_df)
+      combined_df$ID <- shapefile$ID
+      return(combined_df)
+    }
+
+  zonal_stats_adm3_count_df <- combine_zonal_stats(zonal_stats_adm3_count, Haiti_adm3)
+  zonal_stats_adm3_zero_df <- combine_zonal_stats(zonal_stats_adm3_zero, Haiti_adm3)
+
+  # Set column names for clarity
+    months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    stack_names <- c("Aeae", "Aealb", "Quinx")
+  
+  # Function to generate column names
+    generate_column_names <- function(prefix, stack_names, months) {
+      col_names <- c()
+      for (stack in stack_names) {
+        for (month in months) {
+          col_names <- c(col_names, paste0(prefix, "_", month, ".", stack))
+        }
+      }
+      return(col_names)
+    }
+  
+    colnames(zonal_stats_adm3_count_df) <- c(generate_column_names("Count_HR_mean", stack_names, months), "ID")
+    colnames(zonal_stats_adm3_zero_df) <- c(generate_column_names("Pres_pred_HR_mean", stack_names, months), "ID")
+
+  # Merge zonal stats with shapefiles
+    Haiti_adm3_count <- merge(Haiti_adm3, zonal_stats_adm3_count_df, by = "ID")
+    Haiti_adm3_zero <- merge(Haiti_adm3, zonal_stats_adm3_zero_df, by = "ID")
+
+  # Function to plot zonal statistics with customizations
+    plot_zonal_stats <- function(shapefile, value_column, title, output_dir, filename) {
+      p <- ggplot(data = shapefile) +
+        geom_sf(aes_string(fill = value_column), color = NA) +
+        scale_fill_viridis_c(option = "plasma") +
+        theme_minimal() +
+        theme(
+          panel.grid = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_blank()
+        ) +
+        labs(
+          title = title,
+          fill = "Value"
+        ) +
+        theme(
+          plot.title = element_markdown(hjust = 0.5, face = "bold"),  # Use element_markdown for the title
+          legend.position = "bottom"
+        )
+      
+      # Save the plot
+      ggsave(filename = file.path(output_dir, paste0(filename, ".png")), plot = p, width = 8, height = 6, dpi = 300)
+    }
+  
+  # Define months and species
+    months_abbr <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    months_full <- c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    species_abbr <- c("Aeae", "Aealb", "Quinx")
+    species_full <- c("*Aedes aegypti*", "*Aedes albopictus*", "*Culex quinquefasciatus*")
+  
+  # Define output directory and ensure it exists
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions"
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  # Plot for each month and species for both count and presence/absence
+    for (i in seq_along(months_abbr)) {
+      month_abbr <- months_abbr[i]
+      month_full <- months_full[i]
+      
+      for (j in seq_along(species_abbr)) {
+        sp_abbr <- species_abbr[j]
+        sp_full <- species_full[j]
+        
+        count_col <- paste0("Count_HR_mean_", month_abbr, ".", sp_abbr)
+        presence_col <- paste0("Pres_pred_HR_mean_", month_abbr, ".", sp_abbr)
+        
+        count_title <- paste("Count of", sp_full, "in", month_full)
+        presence_title <- paste("Probability of Presence for", sp_full, "in", month_full)
+        
+        count_filename <- paste("Count_of_", sp_abbr, "_", month_abbr, sep = "")
+        presence_filename <- paste("PresAbs_Mean_", sp_abbr, "_", month_abbr, sep = "")
+        
+        plot_zonal_stats(Haiti_adm3_count, count_col, count_title, output_dir, count_filename)
+        plot_zonal_stats(Haiti_adm3_zero, presence_col, presence_title, output_dir, presence_filename)
+      }
+    }
+```
+
+
+
+```{r Making 4x3 grids of pred maps}
+# Load necessary libraries
+library(ggplot2)
+library(cowplot)
+library(sf)
+library(exactextractr)
+library(viridis)
+library(ggtext)
+
+# Function to plot and save individual plots with month titles
+plot_individual_stats <- function(shapefile, value_column, month_full) {
+  p <- ggplot(data = shapefile) +
+    geom_sf(aes_string(fill = value_column), color = NA) +
+    scale_fill_viridis_c(option = "plasma") +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank()
+    ) +
+    labs(
+      title = month_full,
+      fill = "Value"
+    ) +
+    theme(
+      plot.title = element_markdown(hjust = 0.5, face = "bold", size = 10),  # Use element_markdown for the title
+      legend.position = "bottom"
+    )
+  
+  return(p)
+}
+
+# Function to generate presence plots for a given species
+generate_presence_plots <- function(shapefile, species_abbr) {
+  presence_plots <- list()
+  for (i in seq_along(months_abbr)) {
+    month_abbr <- months_abbr[i]
+    month_full <- months_full[i]
+    
+    presence_col <- paste0("Pres_pred_HR_mean_", month_abbr, ".", species_abbr)
+    
+    presence_plots[[i]] <- plot_individual_stats(shapefile, presence_col, month_full)
+  }
+  
+  return(presence_plots)
+}
+
+# Function to combine plots and save the grid with a main title
+combine_and_save_plots <- function(presence_plots, species_name_markdown, filename) {
+  presence_grid <- plot_grid(plotlist = presence_plots, ncol = 4)
+  
+  # Create a blank plot for the title
+  title_plot <- ggplot() + 
+    labs(title = species_name_markdown) +
+    theme_void() +
+    theme(
+      plot.title = element_markdown(size = 15, hjust = 0.5, face = "bold")
+    )
+  
+  final_plot <- plot_grid(title_plot, presence_grid, ncol = 1, rel_heights = c(0.1, 1))
+  
+  ggsave(filename = file.path(output_dir, filename), plot = final_plot, width = 16, height = 12, dpi = 300)
+}
+
+# Define output directory and ensure it exists
+output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Generate and save presence plots for Aedes aegypti
+species_abbr <- "Aeae"
+species_name_markdown <- "Probability of Presence for *Aedes aegypti*"
+presence_plots_aeae <- generate_presence_plots(Haiti_adm3_zero, species_abbr)
+combine_and_save_plots(presence_plots_aeae, species_name_markdown, "Presence_Aeae_4x3_Grid_with_Main_Title.png")
+
+# Generate and save presence plots for Aedes albopictus
+species_abbr <- "Aealb"
+species_name_markdown <- "Probability of Presence for *Aedes albopictus*"
+presence_plots_aealb <- generate_presence_plots(Haiti_adm3_zero, species_abbr)
+combine_and_save_plots(presence_plots_aealb, species_name_markdown, "Presence_Aealb_4x3_Grid_with_Main_Title.png")
+
+# Generate and save presence plots for Culex quinquefasciatus
+species_abbr <- "Quinx"
+species_name_markdown <- "Probability of Presence for *Culex quinquefasciatus*"
+presence_plots_quinx <- generate_presence_plots(Haiti_adm3_zero, species_abbr)
+combine_and_save_plots(presence_plots_quinx, species_name_markdown, "Presence_Quinx_4x3_Grid_with_Main_Title.png")
+
+# Function to generate count plots for a given species
+generate_count_plots <- function(shapefile, species_abbr) {
+  count_plots <- list()
+  for (i in seq_along(months_abbr)) {
+    month_abbr <- months_abbr[i]
+    month_full <- months_full[i]
+    
+    count_col <- paste0("Count_HR_mean_", month_abbr, ".", species_abbr)
+    
+    count_plots[[i]] <- plot_individual_stats(shapefile, count_col, month_full)
+  }
+  
+  return(count_plots)
+}
+
+# Generate and save count plots for Aedes aegypti
+species_abbr <- "Aeae"
+count_title <- "Predicted Counts of *Aedes aegypti*"
+count_plots_aeae <- generate_count_plots(Haiti_adm3_count, species_abbr)
+combine_and_save_plots(count_plots_aeae, count_title, "Count_Aeae_4x3_Grid_with_Main_Title.png")
+
+# Generate and save count plots for Aedes albopictus
+species_abbr <- "Aealb"
+count_title <- "Predicted Counts of *Aedes albopictus*"
+count_plots_aealb <- generate_count_plots(Haiti_adm3_count, species_abbr)
+combine_and_save_plots(count_plots_aealb, count_title, "Count_Aealb_4x3_Grid_with_Main_Title.png")
+
+# Generate and save count plots for Culex quinquefasciatus
+species_abbr <- "Quinx"
+count_title <- "Predicted Counts of *Culex quinquefasciatus*"
+count_plots_quinx <- generate_count_plots(Haiti_adm3_count, species_abbr)
+combine_and_save_plots(count_plots_quinx, count_title, "Count_Quinx_4x3_Grid_with_Main_Title.png")
+
+
+```
+
+
+
+```{r Making GIFs}
+  library(magick)
+
+  {# Aedes aegypti
+  
+  # Set the directory for Count files
+    Aeae_countdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Aeae"
+  
+  # Create a vector of filenames
+    months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    Aeae_countfilenames <- paste0(Aeae_countdir, "/Count_of_Aeae_", months, ".png")
+  
+  # Check if the files exist and read them into a list if they do
+    Aeae_countimglist <- lapply(Aeae_countfilenames, function(file) {
+      if (file.exists(file)) {
+        image_read(file)
+      } else {
+        warning(paste("File does not exist:", file))
+        NULL
+      }
+    })
+  
+  # Combine images into a GIF using image_animate
+    if (length(Aeae_countimglist) > 0) {
+      Aeae_countimganimation <- image_animate(image_join(Aeae_countimglist), fps = 1)
+      
+      # Save the animation as a GIF
+        Aeae_countGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Aeae/Count_of_Aeae.gif"
+        image_write(Aeae_countimganimation, Aeae_countGif)
+        
+      # Print confirmation message
+        cat("GIF created successfully and saved to", Aeae_countGif)
+      } else {
+        cat("No images were found to create a GIF.")
+    }
+  
+  # Set the directory for PresAbs files
+    Aeae_presabsdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Aeae"
+    
+  # Create a vector of filenames
+    Aeae_presabsfilenames <- paste0(Aeae_presabsdir, "/PresAbs_Mean_Aeae_", months, ".png")
+  
+  # Verify that the files exist and read them into a list
+    Aeae_presabsimglist <- lapply(Aeae_presabsfilenames, function(file) {
+      if (file.exists(file)) {
+        image_read(file)
+      } else {
+        warning(paste("File does not exist:", file))
+        NULL
+      }
+    })
+  
+  # Combine images into a GIF
+    if (length(Aeae_presabsimglist) > 0) {
+      Aeae_presabsimganimation <- image_animate(image_join(Aeae_presabsimglist), fps = 1)
+      
+      # Save the animation as a GIF
+        Aeae_presabsGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Aeae/PresAbs_Mean_Aeae.gif"
+        image_write(Aeae_presabsimganimation, Aeae_presabsGif)
+        
+      # Print confirmation message
+        cat("GIF created successfully and saved to", Aeae_presabsGif)
+      } else {
+        cat("No images were found to create a GIF.")
+    }
+  }
+
+  { # Aedes albopictus
+  
+  
+    # Set the directory for Count files
+      Aealb_countdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Aealb"
+    
+    # Create a vector of filenames
+      Aealb_countfilenames <- paste0(Aealb_countdir, "/Count_of_Aealb_", months, ".png")
+    
+    # Check if the files exist and read them into a list if they do
+      Aealb_countimglist <- lapply(Aealb_countfilenames, function(file) {
+        if (file.exists(file)) {
+          image_read(file)
+        } else {
+          warning(paste("File does not exist:", file))
+          NULL
+        }
+      })
+    
+    # Combine images into a GIF using image_animate
+      if (length(Aealb_countimglist) > 0) {
+        Aealb_countimganimation <- image_animate(image_join(Aealb_countimglist), fps = 1)
+        
+        # Save the animation as a GIF
+          Aealb_countGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Aealb/Count_of_Aealb.gif"
+          image_write(Aealb_countimganimation, Aealb_countGif)
+        
+        # Print confirmation message
+          cat("GIF created successfully and saved to", Aealb_countGif)
+        } else {
+          cat("No images were found to create a GIF.")
+      }
+    
+    # Set the directory for PresAbs files
+      Aealb_presabsdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Aealb"
+    
+    # Create a vector of filenames
+      Aealb_presabsfilenames <- paste0(Aealb_presabsdir, "/PresAbs_Mean_Aealb_", months, ".png")
+    
+    # Verify that the files exist and read them into a list
+      Aealb_presabsimglist <- lapply(Aealb_presabsfilenames, function(file) {
+        if (file.exists(file)) {
+          image_read(file)
+        } else {
+          warning(paste("File does not exist:", file))
+          NULL
+        }
+      })
+    
+    # Combine images into a GIF
+      if (length(Aealb_presabsimglist) > 0) {
+        Aealb_presabsimganimation <- image_animate(image_join(Aealb_presabsimglist), fps = 1)
+        
+        # Save the animation as a GIF
+          Aealb_presabsGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Aealb/PresAbs_Mean_Aealb.gif"
+          image_write(Aealb_presabsimganimation, Aealb_presabsGif)
+          
+        # Print confirmation message
+          cat("GIF created successfully and saved to", Aealb_presabsGif)
+        } else {
+          cat("No images were found to create a GIF.")
+      }
+    
+  }
+
+  { # Culex quinquefasciatus
+    
+    # Set the directory for Count files
+      Quinx_countdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Quinx"
+    
+    # Create a vector of filenames
+      Quinx_countfilenames <- paste0(Quinx_countdir, "/Count_of_Quinx_", months, ".png")
+    
+    # Check if the files exist and read them into a list if they do
+      Quinx_countimglist <- lapply(Quinx_countfilenames, function(file) {
+        if (file.exists(file)) {
+          image_read(file)
+        } else {
+          warning(paste("File does not exist:", file))
+          NULL
+        }
+      })
+    
+    # Combine images into a GIF using image_animate
+      if (length(Quinx_countimglist) > 0) {
+        Quinx_countimganimation <- image_animate(image_join(Quinx_countimglist), fps = 1)
+      
+      # Save the animation as a GIF
+        Quinx_countGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Count/Quinx/Count_of_Quinx.gif"
+        image_write(Quinx_countimganimation, Quinx_countGif)
+      
+      # Print confirmation message
+        cat("GIF created successfully and saved to", Quinx_countGif)
+      } else {
+        cat("No images were found to create a GIF.")
+    }
+    
+    # Set the directory for PresAbs files
+      Quinx_presabsdir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Quinx"
+      
+    # Create a vector of filenames
+      Quinx_presabsfilenames <- paste0(Quinx_presabsdir, "/PresAbs_Mean_Quinx_", months, ".png")
+    
+    # Verify that the files exist and read them into a list
+      Quinx_presabsimglist <- lapply(Quinx_presabsfilenames, function(file) {
+        if (file.exists(file)) {
+          image_read(file)
+        } else {
+          warning(paste("File does not exist:", file))
+          NULL
+        }
+      })
+    
+    # Combine images into a GIF
+      if (length(Quinx_presabsimglist) > 0) {
+        Quinx_presabsimganimation <- image_animate(image_join(Quinx_presabsimglist), fps = 1)
+        
+      # Save the animation as a GIF
+        Quinx_presabsGif <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Figures/Haiti_SDMs/CountModels/Predictions/Pres_Abs/Quinx/PresAbs_Mean_Quinx.gif"
+        image_write(Quinx_presabsimganimation, Quinx_presabsGif)
+        
+      # Print confirmation message
+        cat("GIF created successfully and saved to", Quinx_presabsGif)
+      } else {
+        cat("No images were found to create a GIF.")
+      }
+
+  }
+```
+
+
+
+```{r Exporting rasters}
+
+  # Define the folder path
+    output_folder <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/Output"
+  
+  # List of rasters to export
+    rasters_to_export <- list(
+      Aeae.Hurdle.HR,
+      Aealb.Hurdle.HR,
+      Quinx.Hurdle.HR,
+      Aeae.Pres_pred.HR,
+      Aealb.Pres_pred.HR,
+      Quinx.Pres_pred.HR,
+      MeanPrecip,
+      Dst_WtrWy,
+      MeanTemp,
+      NightLights,
+      MeanWind,
+      NDVI_AnnMeans
+    )
+  
+  # List of raster names to use for file naming
+    raster_names <- c(
+      "Aeae_Hurdle_HR",
+      "Aealb_Hurdle_HR",
+      "Quinx_Hurdle_HR",
+      "Aeae_Pres_pred_HR",
+      "Aealb_Pres_pred_HR",
+      "Quinx_Pres_pred_HR",
+      "MeanPrecip",
+      "Dst_WtrWy",
+      "MeanTemp",
+      "NightLights",
+      "MeanWind",
+      "NDVI_AnnMeans"
+    )
+  
+  # Export each raster to the specified folder
+    for (i in seq_along(rasters_to_export)) {
+      raster_path <- file.path(output_folder, paste0(raster_names[i], ".tif"))
+      writeRaster(rasters_to_export[[i]], filename = raster_path, format = "GTiff", overwrite = TRUE)
+      message("Exported: ", raster_names[i], " to ", raster_path)
+    }
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r Preferred Rasters}
+
+  # Define the directory containing the raster files
+    raster_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/Cov_Tifs"
+    #raster_dir <- "C:/Users/Owner/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Covariates/Cov_Tifs"
+  
+  # List of all raster filenames
+    raster_files <- c("Wind.tif", "DstWtrwy.tif", "DstCst.tif", "nightlight.tif", 
+                      "Elevation.tif", "DstRdInt.tif", "DistRd.tif", "Precip.tif", 
+                      "MeanTemp.tif", "MinTemp.tif", "MaxTemp.tif", "PopMean.tif", 
+                      "BltSurfaces.tif", "NDVI_AnnMean.tif", "BldgHght.tif")
+  
+  # List of selected raster filenames
+    selected_raster_files <- c("Wind.tif", "DstWtrwy.tif", "nightlight.tif", 
+                               "Elevation.tif", "Precip.tif", "MeanTemp.tif", 
+                               "MinTemp.tif", "MaxTemp.tif", "BltSurfaces.tif", 
+                               "NDVI_AnnMean.tif")
+    
+    CountModelSiteRasts <- c("BltSurfaces.tif", "Elevation.tif", "PopMean.tif")
+  
+  # Load the Haiti extent vector
+    haiti_vector <- terra::vect("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/MaxEnt/Haiti_Shapefile/Haiti.shp")
+  # haiti_vector <- terra::vect("C:/Users/Owner/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/MaxEnt/Haiti_Shapefile/Haiti.shp")
+    
+  # Load the Haiti extent shapefile
+  #  haiti_sf <- st_read("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/MaxEnt/Haiti_Shapefile/Haiti.shp")
+    #haiti_sf <- st_read("C:/Users/Owner/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/MaxEnt/Haiti_Shapefile/Haiti.shp")
+    
+  # Load the Haiti shapefile using raster::shapefile
+    haiti_shape <- raster::shapefile("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Haiti_Datasets/Shapefiles/HaitiPolygon.shp")
+    haiti_wo_lakes <- raster::shapefile("C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/Lakes/Haiti_wo_Wtrwy.shp")
+    
+    haiti_wo_lakes <- projectExtent(haiti_wo_lakes, haiti_shape)
+    
+  # Load the template raster for alignment (using DstCst.tif as an example)
+    template_raster <- terra::rast(file.path(raster_dir, "Wind.tif"))
+  
+  # Function to load, clip, and resample a raster
+    process_raster <- function(file, template) {
+      raster_path <- file.path(raster_dir, file)
+      raster <- terra::rast(raster_path)
+    
+    # Ensure CRS is set for the raster
+      if (is.na(crs(raster))) {
+        crs(raster) <- crs(template)
+      }
+      
+    # Clip and resample to template extent and resolution
+      raster_clipped <- crop(raster, haiti_vector, mask=TRUE)
+      raster_resampled <- resample(raster_clipped, template)
+    
+    # Convert to RasterLayer
+      raster_resampled <- raster(raster_resampled)
+     
+      return(raster_resampled)
+    }
+  
+  # Process all rasters
+    rasters <- lapply(raster_files, function(file) process_raster(file, template_raster))
+  
+  # Stack all rasters
+    raster_stack <- stack(rasters)
+ 
+
+
+```
+
+
+
+```{r Importing TerraClime rasters}
+
+  # Define the file paths
+    Precip2018_Path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/TerraClime/Precipitation/TerraClimate_ppt_2018.nc"
+    Precip2019_Path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/TerraClime/Precipitation/TerraClimate_ppt_2019.nc"
+    WS2018_Path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/TerraClime/WindSpeed/TerraClimate_ws_2018.nc"
+    WS2019_Path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Documents - Haiti Vector/General/Data and Code/Rasters/TerraClime/WindSpeed/TerraClimate_ws_2019.nc"  
+  
+  # Load the NetCDF files as raster bricks
+    precip2018_brick <- brick(Precip2018_Path)
+    precip2019_brick <- brick(Precip2019_Path)
+    WS2018_brick <- brick(WS2018_Path)
+    WS2019_brick <- brick(WS2019_Path)
+    
+  
+  # Get the number of layers (bands) in the raster brick
+    num_layers <- nlayers(precip2018_brick)
+    month_names <- c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+
+  # Initialize a list to store each month's raster
+    tcmonthlyprecip18_rasters <- list()
+    tcmonthlyprecip19_rasters <- list()
+    tcws18_rasters <- list()
+    tcws19_rasters <- list()
+
+  # Loop through each layer and store it as a separate raster
+    # 2018 Precip
+      for (i in 1:num_layers) {
+        tcmonthlyprecip18_rasters[[i]] <- raster(precip2018_brick, layer = i)
+        names(tcmonthlyprecip18_rasters)[i] <- month_names[i]
+      }
+    # 2019 Precip
+      for (i in 1:num_layers) {
+        tcmonthlyprecip19_rasters[[i]] <- raster(Precip2019_Path, layer = i)
+        names(tcmonthlyprecip19_rasters)[i] <- month_names[i]
+      }    
+    # 2018 WS
+      for (i in 1:num_layers) {
+        tcws18_rasters[[i]] <- raster(WS2018_brick, layer = i)
+        names(tcws18_rasters)[i] <- month_names[i]
+      }
+    # 2019 WS
+      for (i in 1:num_layers) {
+        tcws19_rasters[[i]] <- raster(WS2019_brick, layer = i)
+        names(tcws19_rasters)[i] <- month_names[i]
+      } 
+
+    plot_minimal(stack(tcmonthlyprecip18_rasters))
+    plot_minimal(stack(tcmonthlyprecip19_rasters))
+    plot_minimal(stack(tcws18_rasters))
+    plot_minimal(stack(tcws19_rasters))
+    
+    tcrainJan2018 <- raster::crop(raster::mask(projectRaster(tcmonthlyprecip18_rasters$January, crs = haiti_shape), haiti_shape, updatevalue=NA), haiti_shape)
+    plot_minimal(tcrainJan2018)
+    
+
+```
+
+
+```{r Plotting individual rasters}
+
+  # Colours 
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+
+  # Function to create minimal plots
+    plot_minimal <- function(raster, title) {
+      plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+    }
+    
+  # MeanTemp - messy borders
+    plot_minimal(raster_stack$MeanTemp)
+    
+  # Wind - messy borders
+    plot_minimal(raster_stack$Wind)
+
+  # DstWtrwy - messy borders
+    plot_minimal(raster_stack$DstWtrwy)
+    
+  # DstCst - Looks good
+    plot_minimal(raster_stack$DstCst)
+    
+  # nightlight - Looks good?
+    plot_minimal(raster_stack$nightlight)
+    
+  # Elevation - looks good
+    plot_minimal(raster_stack$Elevation)
+    
+  # DstRdInt - messy borders
+    plot_minimal(raster_stack$DstRdInt)
+    
+  # DistRd - messy borders
+    plot_minimal(raster_stack$DistRd)
+    
+  # Precip - messy borders
+    plot_minimal(raster_stack$Precip)
+    
+  # MeanTemp - messy borders
+    plot_minimal(raster_stack$MeanTemp)
+    
+  # PopMean - messy borders
+    plot_minimal(raster_stack$PopMean)
+    
+  # BltSurfaces - UGLY
+    plot_minimal(raster_stack$BltSurfaces)
+    
+  # NDVI_AnnMean - messy borders
+    plot_minimal(raster_stack$NDVI_AnnMean)
+  
+  # BldgHght - looks good
+    plot_minimal(raster_stack$BldgHght)
+```
+
+
+
+```{r N-Mixture - not working :( }
+
+  # Sum counts and average covariates for each YearMonth and Location
+    HCM.Month <- HCM.Full %>%
+      mutate(Date = as.Date(Date)) %>%
+      mutate(YearMonth = format(Date, "%Y-%m")) %>%
+      group_by(YearMonth, Location) %>%
+      summarise(
+        Quinx = sum(Quinx, na.rm = TRUE),
+        Aeae = sum(Aeae, na.rm = TRUE),
+        Aealb = sum(Aealb, na.rm = TRUE),
+        Latitude = mean(Latitude, na.rm = TRUE),
+        Longitude = mean(Longitude, na.rm = TRUE),
+        UTM_E = mean(UTM_E, na.rm = TRUE),
+        UTM_N = mean(UTM_N, na.rm = TRUE),
+        NDVI = mean(NDVI, na.rm = TRUE),
+        Precip = mean(Precip, na.rm = TRUE),
+        TMax = mean(TMax, na.rm = TRUE),
+        TMean = mean(TMean, na.rm = TRUE),
+        TMin = mean(TMin, na.rm = TRUE),
+        WindMean = mean(WindMean, na.rm = TRUE),
+        DstWtrwy = mean(DstWtrwy, na.rm = TRUE),
+        nightlight = mean(nightlight, na.rm = TRUE),
+        Elevation = mean(Elevation, na.rm = TRUE),
+        BltSurfaces = mean(BltSurfaces, na.rm = TRUE)
+      ) %>%
+      ungroup()
+      View(HCM.Month)
+
+  # Create the total counts
+    HCM.Month$Total_Count <- HCM.Month$Quinx + HCM.Month$Aeae + HCM.Month$Aealb
+
+  # Determine the maximum number of sampling periods per site
+    max_sampling_periods <- HCM.Month %>%
+      group_by(Location) %>%
+      summarise(n = n()) %>%
+      summarise(max_n = max(n)) %>%
+      pull(max_n)
+      #max_sampling_periods == 12
+  
+  # Create the response matrix (y) with correct dimensions
+    response_matrix <- HCM.Month %>%
+      dplyr::select(Location, YearMonth, Total_Count) %>%
+      spread(YearMonth, Total_Count, fill = 0) %>%
+      dplyr::select(-Location) %>%
+      as.matrix()
+  
+  # Create site covariates
+    site_covs <- HCM.Month %>%
+      group_by(Location) %>%
+      summarise(
+        DstWtrwy = mean(DstWtrwy, na.rm = TRUE),
+        nightlight = mean(nightlight, na.rm = TRUE),
+        Elevation = mean(Elevation, na.rm = TRUE),
+        BltSurfaces = mean(BltSurfaces, na.rm = TRUE)
+      ) %>%
+      column_to_rownames(var = "Location") %>%
+      mutate(across(where(is.numeric), scale))
+      nrow(site_covs)
+      ncol(site_covs)
+      
+  # Create observation covariates (obsCovs) - not working
+  #monthlysitecovs <- HCM.Month %>%
+   # select(Location, YearMonth, NDVI, Precip, TMax, TMean, TMin, WindMean) %>%
+   # pivot_longer(cols = NDVI:WindMean, names_to = "variable", values_to = "value") %>%
+   # unite("Location_YearMonth", c(Location, YearMonth)) %>%
+    #pivot_wider(names_from = "variable", values_from = "value") %>%
+    #separate(Location_YearMonth, into = c("Location", "YearMonth"), sep = "_") %>%
+    #arrange(Location, YearMonth) %>%
+    #group_by(Location) %>%
+    #mutate(survey = row_number()) %>%
+    #ungroup() %>%
+    #pivot_longer(cols = NDVI:WindMean, names_to = "variable", values_to = "value") %>%
+    #unite("Location_YearMonth_survey", c(Location, YearMonth, survey)) %>%
+    #pivot_wider(names_from = "variable", values_from = "value") %>%
+    #column_to_rownames(var = "Location_YearMonth_survey")
+  
+  # Create unmarkedFramePCount object
+  umf <- unmarkedFramePCount(y = response_matrix, siteCovs = site_covs, obsCovs = NULL)
+  
+  # Global Model
+  GlobalNMixture.Cxq.P <- pcount(formula = ~1 ~DstWtrwy + nightlight + Elevation + BltSurfaces, data = umf, K = 1000, mixture = "P")
+  summary(GlobalNMixture.Cxq.P)
+  
+  GlobalNMixture.Cxq.NB <- pcount(formula = ~1 ~DstWtrwy + nightlight + Elevation + BltSurfaces, data = umf, K = 1000, mixture = "NB")
+  summary(GlobalNMixture.Cxq.NB)
+  
+  GlobalNMixture.Cxq.zip <- pcount(formula = ~1 ~DstWtrwy + nightlight + Elevation + BltSurfaces, data = umf, K = 1000, mixture = "ZIP")
+  summary(GlobalNMixture.Cxq.zip)
+  
+  AIC(GlobalNMixture.Cxq.P, GlobalNMixture.Cxq.NB, GlobalNMixture.Cxq.zip)
+
+```
+
+
+
+```{r Spatial Hurdle # Paused}
+# Link to worksheet: https://inlabru-org.github.io/inlabru/articles/zip_zap_models.html#zap-model
+
+  # Set options for inlabru
+    bru_options_set(control.compute = list(cpo = TRUE))
+  
+  # Extract the boundary from the raster layer
+    raster_boundary <- st_as_sf(as.polygons(ext(raster_layers$BltSurfaces), crs = st_crs(raster_layers$BltSurfaces)))
+  
+  # Convert HCM.Full to an sf object
+    HCM_sf <- HCM.Full %>%
+      st_as_sf(coords = c("UTM_E", "UTM_N"), crs = st_crs(raster_layers$BltSurfaces))
+
+  # Creation of Mesh - need to revisit
+    mesh <- fm_mesh_2d_inla(
+      loc = st_geometry(HCM_sf),
+      boundary = NULL, # Set the boundary from the raster
+      max.edge = c(500, 1000),    # Set max.edge values, assuming coordinates are in meters
+      offset = c(1000, 2000),     # Set offset values, assuming coordinates are in meters
+      min.angle = 21,             # Ensure the algorithm terminates
+      max.n.strict = 10000,       # Limit the allowed number of mesh vertices
+      max.n = 10000,              # Limit the allowed number of mesh vertices
+      crs = st_crs(raster_layers$BltSurfaces) # Use the CRS from the raster layer
+    )
+
+# Define spatial and temporal covariates
+HCM.Full <- HCM.Full %>%
+  mutate(
+    Intercept = 1,
+    YearMonth = as.factor(YearMonth),
+    Trap_Type = as.factor(Trap_Type)
+  )
+
+# Define the model components
+comps <- ~
+  Intercept(1) +
+  NDVI(NDVI, model = "linear") +
+  Precip(Precip, model = "linear") +
+  TMax(TMax, model = "linear") +
+  TMean(TMean, model = "linear") +
+  TMin(TMin, model = "linear") +
+  WindMean(WindMean, model = "linear") +
+  DstWtrwy(DstWtrwy, model = "linear") +
+  nightlight(nightlight, model = "linear") +
+  Trap_Type(Trap_Type, model = "factor") +
+  YearMonth(YearMonth, model = "factor") +
+  spatial_field(coordinates, model = inla.spde2.pcmatern(mesh, prior.range = c(0.1, 0.01), prior.sigma = c(5, 0.01)))
+
+# Split data into presence-absence and count data
+presence_data <- HCM.Full %>%
+  mutate(presence = ifelse(Aeae > 0, 1, 0))
+
+count_data <- HCM.Full %>%
+  filter(Aeae > 0)
+
+# Define the likelihoods for the hurdle model
+presence_like <- like(
+  formula = presence ~ NDVI + Precip + TMax + TMean + TMin + WindMean + DstWtrwy + nightlight + Trap_Type + YearMonth + spatial_field,
+  family = "binomial",
+  data = presence_data
+)
+
+count_like <- like(
+  formula = Aeae ~ NDVI + Precip + TMax + TMean + TMin + WindMean + DstWtrwy + nightlight + Trap_Type + YearMonth + spatial_field,
+  family = "nbinomial",
+  data = count_data
+)
+
+
+truncated_negbin_like <-
+  if (package_version(getNamespaceVersion("INLA")) < "23.10.19-1") {
+    like(
+      family = "zeroinflatednbinomial0",
+      data = counts_df[counts_df$present > 0, ],
+      formula = Aeae ~ NDVI + Precip + TMax + TMean + TMin + WindMean + DstWtrwy + nightlight + Trap_Type + YearMonth + spatial_field,
+      E = area,
+      control.family = list(hyper = list(theta = list(
+        initial = -20, fixed = TRUE
+      )))
+    )
+  } else {
+    like(
+      family = "nznbinomial",
+      data = counts_df[counts_df$present > 0, ],
+      formula = count ~ elevation + field_count + Intercept_count,
+      E = area
+    )
+  }
+
+# Fit the model
+if (bru_safe_inla()) {
+  fit_hurdle <- bru(
+    components = comps,
+    likelihoods = list(presence_like, count_like),
+    options = list(bru_verbose = 4)
+  )
+
+  # Summarize the fit
+  summary(fit_hurdle)
+
+  # Predict on the original data
+  pred_hurdle <- predict(
+    fit_hurdle, HCM.Full,
+    ~ {
+      presence_prob <- plogis(NDVI + Precip + TMax + TMean + TMin + WindMean + DstWtrwy + nightlight + Trap_Type + YearMonth + spatial_field)
+      count_mean <- exp(NDVI + Precip + TMax + TMean + TMin + WindMean + DstWtrwy + nightlight + Trap_Type + YearMonth + spatial_field)
+      list(
+        presence_prob = presence_prob,
+        count_mean = count_mean
+      )
+    },
+    n.samples = 2500
+  )
+
+  # Extract predictions
+  presence_pred <- pred_hurdle$presence_prob
+  count_pred <- pred_hurdle$count_mean
+
+  # Plot the predictions
+  ggplot() +
+    geom_point(data = HCM.Full, aes(x = UTM_E, y = UTM_N, color = presence_pred$mean), size = 2) +
+    scale_color_viridis_c() +
+    ggtitle("Predicted Probability of Presence")
+
+  ggplot() +
+    geom_point(data = HCM.Full, aes(x = UTM_E, y = UTM_N, color = count_pred$mean), size = 2) +
+    scale_color_viridis_c() +
+    ggtitle("Predicted Count for Presence Locations")
+} else {
+  stop("INLA is not safely installed or loaded. Please check your INLA installation.")
+}
+
+```
+
+
+
+```{r Spatial Hurdle Alternative # Paused}
+
+  coordinates(HCM.noNA) <- ~ UTM_E + UTM_N
+
+  # Creation of Gaussian weights matrix
+    # Compute an empirical variogram to estimate appropriate sigma val
+    variogram_model <- variogram(Aeae ~ 1, data = HCM.noNA)
+    fit_variogram <- fit.variogram(variogram_model, model = vgm("Gau"))
+    
+    # Plot the variogram
+    plot(variogram_model, fit_variogram)
+    
+    # Extract the range parameter as sigma
+    sigma <- fit_variogram$range[2] # 3116.647 meters
+
+    # Calculate the distance matrix
+    dist_matrix <- spDists(sp::coordinates(HCM.noNA), longlat = TRUE)
+    
+    # Create Gaussian decay weights
+    weights_matrix <- exp(-dist_matrix^2 / (2 * sigma^2))
+    
+    # Normalize weights
+    row_sums <- rowSums(weights_matrix)
+    weights_matrix <- weights_matrix / row_sums
+    
+```
+
+
+
+```{r Aeae hurdle model w/ weights # Paused}
+
+
+  # Calculate lagged values for Aeae using the weights matrix
+    HCM.noNA$lag_Aeae <- as.numeric(weights_matrix %*% HCM.noNA$Aeae)
+
+  # Fit the hurdle model with the lagged variable
+    hurdle_model_spatial <- hurdle(
+      Aeae ~ lag_Aeae + Elevation + nightlight + PopMean + NDVI + Precip + TMean + WindMean, 
+      data = HCM.noNA, 
+      dist = "negbin"
+    )
+    
+  # Set lag_Aeae as a constant term that is not removed
+    fixed_terms <- c("lag_Aeae")
+
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(parallel)
+    })
+    clusterExport(cl, list("HCM.noNA", "hurdle_model_spatial", "fixed_terms"))
+    
+
+  # Perform the dredge operation with parallel processing for both models
+    dredge.hurdle_model_spatial <- dredge(hurdle_model_spatial, fixed = "fixed_terms", cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+  
+  # "Best" Model
+    dredged.hurdle_model_spatial <- summary(get.models(dredge.hurdle_model_spatial, 1)[[1]])
+    dredged.hurdle_model_spatial
+  
+  # Best Aeae Model
+    Aeae.Best.HCM.NoNA <- hurdle(
+      Aeae ~ lag_Aeae + nightlight + Precip + WindMean | lag_Aeae + nightlight + Precip + WindMean, 
+      data = HCM.noNA, 
+      dist = "negbin"
+    )
+    autoplot.countreg(Aeae.Best.HCM.NoNA)
+    
+    
+    Aeae.Predict <- hurdle(
+      Aeae ~ nightlight + Precip + WindMean | nightlight + Precip + WindMean, 
+      data = HCM.noNA, 
+      dist = "negbin"
+    )
+    
+    AIC(Aeae.Best.HCM.NoNA, Aeae.Predict)
+  
+```
+
+
+
+```{r Dredging All Three Models w/o Weights # Paused}
+
+  # Make HDB a SpatialPointsDataFrame
+    coordinates(HDB) <- ~ UTM_E + UTM_N
+  # Make NA-free HDB
+    HDB <- na.omit(HCM.Full)
+
+  # Fit the global hurdle models
+    Glob.Hurd.Aeae <- hurdle(
+      Aeae ~ Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind | Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    Glob.Hurd.Aealb <- hurdle(
+      Aealb ~ Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind | Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    )    
+    Glob.Hurd.Quinx <- hurdle(
+      Quinx ~ Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind | Elevatio_1 + NightLight + Pop_Mean + DstWtr_Mea + MeanNDVI + MeanPrecip + TMean + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    
+  # Prepare for dredging
+    options(na.action = "na.fail")
+
+  # Create a cluster for parallel processing
+    cl <- makeCluster(detectCores() - 1)
+    clusterEvalQ(cl, {
+      library(MuMIn)
+      library(countreg)
+      library(sp)
+      library(parallel)
+    })
+    clusterExport(cl, list("HDB", "Glob.Hurd.Aeae", "Glob.Hurd.Aealb", "Glob.Hurd.Quinx"))
+    
+
+  # Perform the dredge operation with parallel processing for all three models
+    Dredge.Aspat.Aeae <- dredge(Glob.Hurd.Aeae, cluster = "cl", trace = TRUE)
+    Dredge.Aspat.Aealb <- dredge(Glob.Hurd.Aealb, cluster = "cl", trace = TRUE)
+    Dredge.Aspat.Quinx <- dredge(Glob.Hurd.Quinx, cluster = "cl", trace = TRUE)
+
+  # Stop the cluster after dredging
+    stopCluster(cl)
+  
+  # Reset the NA action to omit missing values
+    options(na.action = "na.omit")
+  
+  # "Best" Aeae Model
+    Dredged.Aspat.Aeae <- summary(get.models(Dredge.Aspat.Aeae, 1)[[1]])
+
+  # "Best" Aealb Model
+    Dredged.Aspat.Aealb <- summary(get.models(Dredge.Aspat.Aealb, 1)[[1]])
+
+  # "Best" Quinx Model
+    Dredged.Aspat.Quinx <- summary(get.models(Dredge.Aspat.Quinx, 1)[[1]])
+    
+  # Best models
+    Aspat.Aeae <- hurdle(
+      Aeae ~ Elevatio_1 + NightLight + MeanNDVI + MeanPrecip  | 
+             Elevatio_1 + DstWtr_Mea + Pop_Mean + MeanPrecip + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    
+    Aspat.Aealb <- hurdle(
+      Aealb ~ Elevatio_1 + MeanNDVI + MeanPrecip + MeanWind + Pop_Mean + TMean |
+              Elevatio_1 + NightLight + Pop_Mean + MeanWind + TMean, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+    
+    Aspat.Quinx <- hurdle(
+      Quinx ~ DstWtr_Mea + NightLight + Pop_Mean + TMean | 
+              DstWtr_Mea + Elevatio_1 + MeanNDVI + MeanPrecip + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+    
+  # Renaming vars to fit predictor rasters
+    HDB$BltSurfaces <- HDB$BltSurf_Me
+    HDB$Elevation <- HDB$Elevatio_1
+    HDB$PopMean <- HDB$Pop_Mean
+    HDB$NDVI <- HDB$MeanNDVI
+    HDB$Precip <- HDB$MeanPrecip
+    HDB$WindMean <- HDB$MeanWind
+    HDB$nightlight <- HDB$NightLight
+    
+    
+    Aspat.Aeae <- hurdle(
+      Aeae ~ Elevatio_1 + NightLight + MeanNDVI + MeanPrecip  | 
+             Elevatio_1 + DstWtr_Mea + Pop_Mean + MeanPrecip + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    
+    Aspat.Aealb <- hurdle(
+      Aealb ~ Elevatio_1 + MeanNDVI + MeanPrecip + MeanWind + Pop_Mean + TMean |
+              Elevatio_1 + NightLight + Pop_Mean + MeanWind + TMean, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+    
+    Aspat.Quinx <- hurdle(
+      Quinx ~ DstWtr_Mea + NightLight + Pop_Mean + TMean | 
+              DstWtr_Mea + Elevatio_1 + MeanNDVI + MeanPrecip + MeanWind, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+    
+  # Alternative for AnnMeans Rasters
+    HDB$BltSurfaces <- HDB$BltSurf_Me
+    HDB$Elevation <- HDB$Elevatio_1
+    HDB$PopMean <- HDB$Pop_Mean
+    HDB$NDVI_Mean <- HDB$MeanNDVI
+    HDB$Precip_Mean <- HDB$MeanPrecip
+    HDB$WindMean_Mean <- HDB$MeanWind
+    HDB$TMean_Mean <- HDB$TMean
+    HDB$nightlight <- HDB$NightLight
+    HDB$DstWtrwy <- HDB$DstWtr_Mea
+    
+    Aspat.Aeae <- hurdle(
+      Aeae ~ Elevation + nightlight + NDVI_Mean + Precip_Mean  | 
+             Elevation + DstWtrwy + PopMean + Precip_Mean + WindMean_Mean, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    
+    Aspat.Aealb <- hurdle(
+      Aealb ~ Elevation + NDVI_Mean + Precip_Mean + WindMean_Mean + PopMean + TMean_Mean |
+              Elevation + nightlight + PopMean + WindMean_Mean + TMean_Mean, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+    
+    Aspat.Quinx <- hurdle(
+      Quinx ~ DstWtrwy + nightlight + PopMean + TMean_Mean | 
+              DstWtrwy + Elevation + NDVI_Mean + Precip_Mean + WindMean_Mean, 
+      data = HDB, 
+      dist = "negbin"
+    )
+    
+    Glob.Hurd.Aeae <- hurdle(
+      Aeae ~ BltSurfaces + Elevation + PopMean + nightlight + DstWtrwy + NDVI_Mean + Precip_Mean + TMean_Mean + WindMean_Mean | BltSurfaces + Elevation + PopMean + nightlight + DstWtrwy + NDVI_Mean + Precip_Mean + TMean_Mean + WindMean_Mean, 
+      data = HDB, 
+      dist = "negbin"
+    )
+```
+
+
+
+```{r Predictions - Selected rasters ~ annual data}
+
+  HDB$Wind <- HDB$MeanWind
+  HDB$DstWtrwy <- HDB$DstWtr_Mea
+  HDB$nightlight <- HDB$NightLight
+  HDB$Elevation <- HDB$Elevatio_1
+  HDB$Precip <- HDB$MeanPrecip
+  HDB$MeanTemp <- HDB$TMean
+  HDB$NDVI_AnnMean <- HDB$MeanNDVI
+  
+  HDB_sf <- HDB %>%
+      st_as_sf(coords = c("UTM_E", "UTM_N"), crs = st_crs(raster_stack))
+
+  # Models
+      Informed.Hurd.Aeae <- hurdle(
+        Aeae ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind | Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, 
+        data = HDB_sf, 
+        dist = "negbin"
+      )
+      summary(Informed.Hurd.Aeae)
+      
+      Informed.Hurd.Aealb <- hurdle(
+        Aealb ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind | Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, 
+        data = HDB_sf, 
+        dist = "negbin"
+      ) 
+    
+      Informed.Hurd.Quinx <- hurdle(
+        Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind | Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, 
+        data = HDB_sf, 
+        dist = "negbin"
+      ) 
+      
+      
+      ZINB.Aeae <- zeroinfl(Aeae ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind | Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, 
+        data = HDB_sf, 
+        dist = "negbin"
+      )
+      
+  # Define functions to extract covariates from the raster stack for prediction
+    # Zero Model prediction w/ scaling to prevent values below zero or > 1
+      predict_zero_model <- function(model, raster_stack) {
+        presence_pred <- predict(raster_stack, model, type = "zero")
+      }
+    
+    # Count Model prediction
+      predict_count_model <- function(model, raster_stack) {
+        predict(raster_stack, model, type = "count")
+      }
+      
+    # Full Hurdle Prediction
+      predict_hurdle <- function(model, raster_stack) {
+        predict(raster_stack, model)
+      }
+
+  # Perform predictions for Aedes aegypti
+    Informed.Aeae.Pres_pred <- predict_zero_model(Informed.Hurd.Aeae, raster_stack)
+    Informed.Aeae.Count_pred <- predict_count_model(Informed.Hurd.Aeae, raster_stack)
+    Informed.Aeae.Hurdle <- predict_hurdle(Informed.Hurd.Aeae, raster_stack)    
+    
+  # Perform predictions for Aedes albopictus
+    Informed.Aealb.Pres_pred <- predict_zero_model(Informed.Hurd.Aealb, raster_stack)
+    Informed.Aealb.Count_pred <- predict_count_model(Informed.Hurd.Aealb, raster_stack)    
+
+  # Perform predictions for Culex quinquefasciatus
+    Informed.Quinx.Pres_pred <- predict_zero_model(Informed.Hurd.Quinx, raster_stack)
+    Informed.Quinx.Count_pred <- predict_count_model(Informed.Hurd.Quinx, raster_stack)  
+    
+
+  # Colours 
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+
+  # Function to create minimal plots
+    plot_minimal <- function(raster, title) {
+      plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+    }
+
+  # Plots
+    # Aedes aegypti
+      AeaePresPlot <- plot_minimal(Informed.Aeae.Pres_pred)
+      AeaeCountPlot <- plot_minimal(Informed.Aeae.Count_pred)
+      AeaeHurdlePlot <- plot_minimal(Informed.Aeae.Hurdle_pred)
+
+    # Aedes albopictus
+      AealbPresPlot <- plot_minimal(Informed.Aealb.Pres_pred)
+      AealbCountPlot <- plot_minimal(Informed.Aealb.Count_pred)
+      
+    # Culex quinquefasciatus
+      QuinxPresPlot <- plot_minimal(Informed.Quinx.Pres_pred)
+      QuinxCountPlot <- plot_minimal(Informed.Quinx.Count_pred)
+
+
+      Informed.Hurd.Quinx <- hurdle(
+        Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind | Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, 
+        data = HDB_sf, 
+        dist = "negbin"
+      )       
+      
+      Test <- pscl::hurdle(
+        Quinx ~ MeanTemp | 
+              MeanTemp, 
+        data = HDB_sf, 
+        dist = "negbin"
+      ) 
+      
+      plot_minimal(predict(raster_stack, Test))
+      
+      plot_minimal(predict_zero_model(Test, raster_stack))      
+      plot_minimal(predict_count_model(Test, raster_stack))
+      plot_minimal(predict_hurdle(Test, raster_stack))
+      
+      HDB_sf$Quinxbin <- ifelse(HDB_sf$Quinx >= 1, 1,0)
+      Test.1 <- glm(Quinxbin ~ MeanTemp, data = HDB_sf, family = binomial(link = "logit"))
+      plot_minimal(predict_hurdle(Test.1, raster_stack))
+      
+      
+        # Cxq Model - zero trunc        
+    HDB_sf$Cxq0trunc <- HDB_sf$Quinx
+    HDB_sf$Cxq0trunc[HDB_sf$Quinx == 0] <- NA
+      IHDB_sf.0Trunc <- na.omit(HDB_sf)
+      
+    Test.2 <- zerotrunc(Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, dist = "negbin", data = IHDB_sf.0Trunc)
+    summary(Informed.Hurd.Quinx)
+    summary(Test.2)
+    plot_minimal(predict_hurdle(Test.2, raster_stack))
+    
+    Test.3 <- glm.nb(Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, data = IHDB_sf.0Trunc)
+    summary(Informed.Hurd.Quinx)
+    summary(Test.2)
+    summary(Test.3)
+    AIC(Test.2, Test.3)
+    
+  Test.4 <- vglm(Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, family = posnegbinomial(), data = IHDB_sf.0Trunc)
+    summary(Test.2)
+    summary(Test.4)
+    
+  Test.5 <- hurdle(Aeae ~ Elevation + NDVI_AnnMean + Precip, dist = "negbin", data = HDB_sf)
+  plot_minimal(predict(raster_stack, Test.5))
+
+    
+```
+
+
+
+```{r Manual hurdle}
+
+  # Neg binomial log likelihood function
+    hurdle_nb_ll <- function(y, X, par) {
+      
+      # Extract parameters
+        logitpars  = par[grep('logit', names(par))]
+        NegBinpars = par[grep('NegBin', names(par))]
+        
+        theta = exp(par[grep('theta', names(par))])
+      
+      # Binomial model
+        Xlogit = X
+        ylogit = ifelse(y == 0, 0, 1)
+        
+        LPlogit = Xlogit %*% logitpars
+        mulogit = plogis(LPlogit)
+      
+      # Calculate the binomial likelihood
+        logliklogit = -sum(ylogit * log(mulogit) + (1 - ylogit) * log(1 - mulogit))
+      
+      # NB model
+        XNB = X[y > 0, ]
+        yNB = y[y > 0]
+      
+        muNB = exp(XNB %*% NegBinpars)
+      
+      # Calculate the likelihoods
+        loglik0  = dnbinom(0, mu = muNB, size = theta, log = TRUE)
+        loglik1  = dnbinom(yNB, mu = muNB, size = theta, log = TRUE)
+        loglikNB = -(sum(loglik1) - sum(log(1 - exp(loglik0))))
+      
+      # Combine likelihoods
+        loglik = loglikNB + logliklogit
+        loglik
+    }
+
+
+  # Use a binomial glm to get start values
+    init_mod <- glm(
+      Quinxbin ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, data = HDB_sf, family = binomial)
+
+  # Get initial values for parameters
+    starts = c(
+      logit = coef(init_mod),
+      NegBin = rep(0, length(coef(init_mod))),  # Initialize NegBinpars to zeros
+      theta = log(1)  # Initialize theta to log(1)
+    )
+
+  # Fit the model using optim
+    fit_nb = optim(
+      par = starts,
+      fn = hurdle_nb_ll,
+      X = model.matrix(~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind, data = HDB_sf),
+      y = HDB_sf$Quinx,
+      control = list(maxit = 5000, reltol = 1e-12),
+      method = "BFGS",
+      hessian = TRUE
+    )
+
+  # Extract parameter estimates, standard errors, Z-values, and p-values
+    B = fit_nb$par
+    se = sqrt(diag(solve(fit_nb$hessian)))
+    Z = B / se
+    p = ifelse(Z >= 0, pnorm(Z, lower = FALSE) * 2, pnorm(Z) * 2)
+
+  # Create summary table
+    summary_table = round(data.frame(B, se, Z, p), 3)
+
+  # Output the summary table and log-likelihood value
+    list(summary = summary_table, ll = fit_nb$value)
+
+  # Define the prediction function for the custom model
+    predict_hurdle_nb <- function(newdata, model, formula) {
+      par <- model$par
+      logitpars <- par[grep('logit', names(par))]
+      NegBinpars <- par[grep('NegBin', names(par))]
+      theta <- exp(par[grep('theta', names(par))])
+      X_new <- model.matrix(formula, data = newdata)
+      LPlogit <- X_new %*% logitpars
+      mulogit <- plogis(LPlogit)
+      muNB <- exp(X_new %*% NegBinpars)
+      predictions <- mulogit * muNB
+      return(predictions)
+    }
+
+    
+  # Define the predict_model function
+    predict_model <- function(model, raster_stack, formula) {
+      raster_predict <- function(block) {
+        newdata <- as.data.frame(block)
+        predict_hurdle_nb(newdata, model, formula)
+      }
+      predicted_raster <- raster::predict(raster_stack, fun = raster_predict, progress = 'text')
+      return(predicted_raster)
+    }
+    
+  # Model Formula    
+    model_formula <- Quinx ~ Elevation + nightlight + DstWtrwy + NDVI_AnnMean + Precip + MeanTemp + Wind
+
+  # Predict using the custom model and raster stack
+    predicted_raster <- predict_model(fit_nb, raster_stack, model_formula)
+
+  # Plot the predicted raster
+    plot(predicted_raster)    
+```
+
+
+
+
+```{r Combined prediction for Aealb}
+  # Model
+    Aspat.Aealb <- hurdle(
+      Aealb ~ Elevation + NDVI_Mean + Precip_Mean + WindMean_Mean + PopMean + TMean_Mean |
+              BltSurfaces + Elevation + WindMean_Mean + PopMean + TMean_Mean, 
+      data = HDB, 
+      dist = "negbin"
+    ) 
+
+  # Define functions to extract covariates from the raster stack for prediction
+    predict_zero_model <- function(model, raster_stack) {
+      presence_pred <- predict(raster_stack, model, type = "prob", component = "zero")
+      presence_pred[presence_pred > 1] <- 1  # Clamp values greater than 1
+      presence_pred[presence_pred < 0] <- 0  # Clamp values less than 0
+      return(presence_pred)
+    }
+    
+    predict_zero_model <- function(model, raster_stack) {
+      presence_pred <- predict(raster_stack, model, type = "zero")
+        min_val <- min(presence_pred[], na.rm = TRUE)
+        max_val <- max(presence_pred[], na.rm = TRUE)
+        scaled_presence_pred <- (presence_pred - min_val) / (max_val - min_val)
+      return(scaled_presence_pred)
+    }
+    
+    predict_count_model <- function(model, raster_stack) {
+      predict(raster_stack, model, type = "count")
+    }
+
+  # Perform predictions using the model and the raster stack
+    Aspat.Aealb.Pres_pred <- predict_zero_model(Aspat.Aealb, Annual_rasters)
+    Aspat.Aealb.Count_pred <- predict_count_model(Aspat.Aealb, Annual_rasters)
+    
+  # Save the predicted raster to a file if needed
+    writeRaster(Aspat.Aealb.Pres_pred, "presence_Aeae.tif", format = "GTiff", overwrite = TRUE)
+    writeRaster(Aspat.Aealb.Count_pred, "count_Aeae.tif", format = "GTiff", overwrite = TRUE)
+
+  # Print summaries
+    print(summary(Aspat.Aealb.Pres_pred))
+    print(summary(Aspat.Aealb.Count_pred))
+  
+  # Plot 
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+
+  # Function to create minimal plots
+    plot_minimal <- function(raster, title) {
+      plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+    }
+  
+    plot_minimal(Aspat.Aealb.Pres_pred)
+    plot_minimal(Aspat.Aealb.Count_pred)
+```
+
+
+
+```{r Model Prediction}
+
+  # Install and load necessary packages
+    install.packages("magick")
+    library(magick)
+    library(raster)
+    library(sp)
+    library(pscl)
+    library(viridis)
+    library(RColorBrewer)
+  
+  # Define the common resolution and extent from a stable raster (e.g., DstWtrwy)
+    target_raster <- rasters$DstWtrwy
+    common_extent <- extent(target_raster)
+    common_resolution <- res(target_raster)
+  
+  # Function to resample raster to common resolution and extent
+    resample_to_common <- function(raster, target_raster) {
+      resampled_raster <- resample(raster, target_raster, method = "bilinear")
+      return(resampled_raster)
+    }
+  
+  # Resample all rasters to the common resolution and extent
+    raster_layers_resampled <- lapply(rasters, resample_to_common, target_raster = target_raster)
+  
+  # Color scheme for the maps
+    plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+  
+  # Function to create minimal plots
+    plot_minimal <- function(raster, title, zlim) {
+      plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, zlim = zlim, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+    }
+  
+  # Function to create monthly prediction
+  predict_month <- function(month, dataset, target_raster, zlim) {
+    # Create a monthly dataset with renamed variables
+    dataset[[paste0("Precip_", month)]] <- dataset$Precip
+    dataset[[paste0("WindMean_", month)]] <- dataset$WindMean
+    
+    # Fit the hurdle model
+    formula <- as.formula(paste("Aeae ~ nightlight + Precip_", month, " + WindMean_", month, " | nightlight + Precip_", month, " + WindMean_", month, sep = ""))
+    Aeae.Predict <- hurdle(formula, data = dataset, dist = "negbin")
+    
+    # Create raster stack for the month
+    monthly_stack <- stack(
+      raster_layers_resampled[[paste0("NDVI_", month)]], 
+      raster_layers_resampled[[paste0("Precip_", month)]], 
+      raster_layers_resampled[[paste0("TMax_", month)]], 
+      raster_layers_resampled[[paste0("TMean_", month)]], 
+      raster_layers_resampled[[paste0("TMin_", month)]], 
+      raster_layers_resampled[[paste0("WindMean_", month)]],
+      raster_layers_resampled$DstWtrwy, 
+      raster_layers_resampled$nightlight, 
+      raster_layers_resampled$Elevation, 
+      raster_layers_resampled$BltSurfaces, 
+      raster_layers_resampled$PopMean
+    )
+    
+    # Convert raster stack to data frame
+    raster_df <- as.data.frame(monthly_stack, xy = TRUE)
+    
+    # Predict presence/absence (zero component)
+    zero_preds <- predict(Aeae.Predict, raster_df, type = "zero")
+    
+    # Predict counts (count component)
+    count_preds <- predict(Aeae.Predict, raster_df, type = "count")
+    
+    # Convert zero predictions back to raster format
+    presence_absence_raster <- rasterFromXYZ(cbind(raster_df[, c("x", "y")], zero_preds))
+    
+    # Convert count predictions back to raster format
+    abundance_raster <- rasterFromXYZ(cbind(raster_df[, c("x", "y")], count_preds))
+    
+    # Plot the predicted presence/absence raster
+    jpeg(filename = file.path("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", paste0("predicted_presence_absence_", month, ".jpg")), width = 1920, height = 1080, quality = 100)
+    plot_minimal(presence_absence_raster, paste("Predicted Presence/Absence for", month), zlim)
+    dev.off()
+    
+    # Plot the predicted abundance raster
+    jpeg(filename = file.path("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", paste0("predicted_abundance_", month, ".jpg")), width = 1920, height = 1080, quality = 100)
+    plot_minimal(abundance_raster, paste("Predicted Abundance for", month), zlim)
+    dev.off()
+    
+    # Save the predicted presence/absence raster
+    writeRaster(presence_absence_raster, filename = paste0("predicted_presence_absence_", month, ".tif"), format = "GTiff", overwrite = TRUE)
+    
+    # Save the predicted abundance raster
+    writeRaster(abundance_raster, filename = paste0("predicted_abundance_", month, ".tif"), format = "GTiff", overwrite = TRUE)
+  }
+  
+  # List of months for prediction (excluding October)
+    months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec")
+  
+  # Get the overall range of the count predictions for a consistent color scale
+    all_predictions <- do.call(c, lapply(months, function(month) {
+      HCMPred <- HCM.noNA  # Copy the base dataset
+      HCMPred[[paste0("Precip_", month)]] <- HCMPred$Precip
+      HCMPred[[paste0("WindMean_", month)]] <- HCMPred$WindMean
+      formula <- as.formula(paste("Aeae ~ nightlight + Precip_", month, " + WindMean_", month, " | nightlight + Precip_", month, " + WindMean_", month, sep = ""))
+      Aeae.Predict <- hurdle(formula, data = HCMPred, dist = "negbin")
+      monthly_stack <- stack(
+        raster_layers_resampled[[paste0("NDVI_", month)]], 
+        raster_layers_resampled[[paste0("Precip_", month)]], 
+        raster_layers_resampled[[paste0("TMax_", month)]], 
+        raster_layers_resampled[[paste0("TMean_", month)]], 
+        raster_layers_resampled[[paste0("TMin_", month)]], 
+        raster_layers_resampled[[paste0("WindMean_", month)]],
+        raster_layers_resampled$DstWtrwy, 
+        raster_layers_resampled$nightlight, 
+        raster_layers_resampled$Elevation, 
+        raster_layers_resampled$BltSurfaces, 
+        raster_layers_resampled$PopMean
+      )
+      raster_df <- as.data.frame(monthly_stack, xy = TRUE)
+      predict(Aeae.Predict, raster_df, type = "count")
+    }))
+    zlim <- range(all_predictions, na.rm = TRUE)
+  
+  # Iterate over each month and make predictions
+    for (month in months) {
+      HCMPred <- HCM.noNA  # Copy the base dataset
+      predict_month(month, HCMPred, target_raster, zlim)
+    }
+  
+  # Create a GIF from the saved JPEGs
+    jpeg_files <- list.files("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", pattern = "predicted_abundance_.*\\.jpg", full.names = TRUE)
+    gif <- image_read(jpeg_files) %>%
+      image_animate(fps = 1) %>%
+      image_write("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps/abundance_maps.gif")
+  
+  
+  # Create a GIF from the saved JPEGs in the correct order
+    jpeg_files <- list.files("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", pattern = "predicted_abundance_.*\\.jpg", full.names = TRUE)
+    month_order <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec")
+    jpeg_files_ordered <- jpeg_files[order(match(sub(".*predicted_abundance_(.*)\\.jpg", "\\1", basename(jpeg_files)), month_order))]
+    gif <- image_read(jpeg_files_ordered) %>%
+      image_animate(fps = 1) %>%
+      image_write("C:/Users/ianpsheasmith/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps/abundance_maps.gif")
+
+
+```
+
+
+
+```{r Predictions for all three species based on lowest AIC models}
+
+# Define the common resolution and extent from a stable raster (e.g., DstWtrwy)
+target_raster <- rasters$DstWtrwy
+common_extent <- extent(target_raster)
+common_resolution <- res(target_raster)
+
+# Function to resample raster to common resolution and extent
+resample_to_common <- function(raster, target_raster) {
+  resampled_raster <- resample(raster, target_raster, method = "bilinear")
+  return(resampled_raster)
+}
+
+# Resample all rasters to the common resolution and extent
+raster_layers_resampled <- lapply(raster_layers, resample_to_common, target_raster = target_raster)
+
+# Color scheme for the maps
+plasma_colors <- c("#5805dfff", "#8d01efff", "#bf09eeff", "#ec2cdbff", "#ff51bdff", "#ff769fff", "#ff9d82ff", "#ffc666ff", "#fff44aff")
+
+# Function to create minimal plots
+plot_minimal <- function(raster, title, zlim) {
+  plot(raster, col = plasma_colors, main = title, legend = TRUE, axes = FALSE, box = FALSE, zlim = zlim, legend.args = list(text = "Value", side = 4, font = 2, line = 2.5, cex = 0.8))
+}
+
+# Function to create monthly prediction
+predict_month <- function(month, dataset, target_raster, zlim) {
+  # Create a monthly dataset with renamed variables
+  dataset[[paste0("Precip_", month)]] <- dataset$Precip
+  dataset[[paste0("WindMean_", month)]] <- dataset$WindMean
+  dataset[[paste0("NDVI_", month)]] <- dataset$NDVI
+  dataset[[paste0("MTemp_", month)]] <- dataset$MTemp
+  
+  # Fit the hurdle model
+  formula <- as.formula(paste("Aeae ~ BltSurfaces + NDVI_", month, " + Precip_", month, " + PopMean | Elevation + Precip_", month, " + WindMean_", month, " + PopMean", sep = ""))
+  Aeae.Predict <- hurdle(formula, data = dataset, dist = "negbin")
+  
+  # Create raster stack for the month
+  monthly_stack <- stack(
+    raster_layers_resampled[[paste0("NDVI_", month)]], 
+    raster_layers_resampled[[paste0("Precip_", month)]], 
+    raster_layers_resampled[[paste0("TMax_", month)]], 
+    raster_layers_resampled[[paste0("TMean_", month)]], 
+    raster_layers_resampled[[paste0("TMin_", month)]], 
+    raster_layers_resampled[[paste0("WindMean_", month)]],
+    raster_layers_resampled$DstWtrwy, 
+    raster_layers_resampled$nightlight, 
+    raster_layers_resampled$Elevation, 
+    raster_layers_resampled$BltSurfaces, 
+    raster_layers_resampled$PopMean
+  )
+  
+  # Convert raster stack to data frame
+  raster_df <- as.data.frame(monthly_stack, xy = TRUE)
+  
+  # Predict presence/absence (zero component)
+  zero_preds <- predict(Aeae.Predict, raster_df, type = "zero")
+  
+  # Predict counts (count component)
+  count_preds <- predict(Aeae.Predict, raster_df, type = "count")
+  
+  # Convert zero predictions back to raster format
+  presence_absence_raster <- rasterFromXYZ(cbind(raster_df[, c("x", "y")], zero_preds))
+  
+  # Convert count predictions back to raster format
+  abundance_raster <- rasterFromXYZ(cbind(raster_df[, c("x", "y")], count_preds))
+  
+  # Plot the predicted presence/absence raster
+  jpeg(filename = file.path("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", paste0("predicted_presence_absence_", month, ".jpg")), width = 1920, height = 1080, quality = 100)
+  plot_minimal(presence_absence_raster, paste("Predicted Presence/Absence for", month), zlim)
+  dev.off()
+  
+  # Plot the predicted abundance raster
+  jpeg(filename = file.path("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", paste0("predicted_abundance_", month, ".jpg")), width = 1920, height = 1080, quality = 100)
+  plot_minimal(abundance_raster, paste("Predicted Abundance for", month), zlim)
+  dev.off()
+  
+  # Save the predicted presence/absence raster
+  writeRaster(presence_absence_raster, filename = paste0("predicted_presence_absence_", month, ".tif"), format = "GTiff", overwrite = TRUE)
+  
+  # Save the predicted abundance raster
+  writeRaster(abundance_raster, filename = paste0("predicted_abundance_", month, ".tif"), format = "GTiff", overwrite = TRUE)
+}
+
+# List of months for prediction (excluding October)
+months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec")
+
+# Get the overall range of the count predictions for a consistent color scale
+all_predictions <- do.call(c, lapply(months, function(month) {
+  HDB[[paste0("Precip_", month)]] <- HDB$Precip
+  HDB[[paste0("WindMean_", month)]] <- HDB$WindMean
+  HDB[[paste0("NDVI_", month)]] <- HDB$NDVI
+  HDB[[paste0("MTemp_", month)]] <- HDB$MTemp
+  formula <- as.formula(paste("Aeae ~ BltSurfaces + NDVI_", month, " + Precip_", month, " + PopMean | Elevation + Precip_", month, " + WindMean_", month, " + PopMean", sep = ""))
+  Aeae.Predict <- hurdle(formula, data = HDB, dist = "negbin")
+  monthly_stack <- stack(
+    raster_layers_resampled[[paste0("NDVI_", month)]], 
+    raster_layers_resampled[[paste0("Precip_", month)]], 
+    raster_layers_resampled[[paste0("TMax_", month)]], 
+    raster_layers_resampled[[paste0("TMean_", month)]], 
+    raster_layers_resampled[[paste0("TMin_", month)]], 
+    raster_layers_resampled[[paste0("WindMean_", month)]],
+    raster_layers_resampled$DstWtrwy, 
+    raster_layers_resampled$nightlight, 
+    raster_layers_resampled$Elevation, 
+    raster_layers_resampled$BltSurfaces, 
+    raster_layers_resampled$PopMean
+  )
+  raster_df <- as.data.frame(monthly_stack, xy = TRUE)
+  predict(Aeae.Predict, raster_df, type = "count")
+}))
+zlim <- range(all_predictions, na.rm = TRUE)
+
+# Iterate over each month and make predictions
+for (month in months) {
+  HDB <- HCM.noNA  # Copy the base dataset
+  HDB[[paste0("Precip_", month)]] <- HDB$Precip
+  HDB[[paste0("WindMean_", month)]] <- HDB$WindMean
+  HDB[[paste0("NDVI_", month)]] <- HDB$NDVI
+  HDB[[paste0("MTemp_", month)]] <- HDB$MTemp
+  predict_month(month, HDB, target_raster, zlim)
+}
+
+# Create a GIF from the saved JPEGs
+jpeg_files <- list.files("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", pattern = "predicted_abundance_.*\\.jpg", full.names = TRUE)
+gif <- image_read(jpeg_files) %>%
+  image_animate(fps = 1) %>%
+  image_write("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps/abundance_maps.gif")
+
+
+# Create a GIF from the saved JPEGs in the correct order
+jpeg_files <- list.files("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps", pattern = "predicted_abundance_.*\\.jpg", full.names = TRUE)
+month_order <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec")
+jpeg_files_ordered <- jpeg_files[order(match(sub(".*predicted_abundance_(.*)\\.jpg", "\\1", basename(jpeg_files)), month_order))]
+gif <- image_read(jpeg_files_ordered) %>%
+  image_animate(fps = 1) %>%
+  image_write("C:/Users/Owner/OneDrive - University of Florida/von Fricken/Figures/AeaeHurdleMaps/abundance_maps.gif")
+
+```
