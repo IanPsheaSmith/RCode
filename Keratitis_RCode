@@ -1,0 +1,3501 @@
+---
+title: "Keratitis_Data_Ian"
+author: "Ian Pshea-Smith"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r Libraries}
+
+  library(readxl) # read_excel()
+  library(dplyr) # Data manipulation & management
+  library(tidyr) # Data manipulation & management
+  library(tigris) # Used for grabbing county names and labels
+  library(ggplot2) # Used for mapping & plotting
+    library(ggforce) # Used for mapping & plotting
+    library(ggdist) # Used for mapping & plotting
+    library(gghalves) # Used for mapping & plotting
+    library(ggbeeswarm) # Used for mapping & plotting
+    library(cowplot) # Used for mapping - ggdraw()
+    library(biscale) # Used for bivariate mapping
+    library(magick) # Used for GIFS
+  library(sf) # Used for spatial analyses
+  library(rgeoda) # Used for LISA
+  library(stringr) # Used for string manipulation
+  library(tidycensus) # Used for US census data
+  library(findSVI) # Used for SVI obtainment
+  library(gridExtra) # Used for gridded maps
+  library(healthyR.data)
+  library(MASS) # Used for robust linear models
+
+```
+
+
+
+```{r Data Import of Keratitis Data}
+
+  # File Path
+    file_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/K_C.xlsx"
+
+  # Import the Excel file
+    K_C <- read_excel(file_path, sheet = 1)
+
+  # Get the unique values of the fields
+    unique_years <- unique(K_C$YearEnd)
+    unique_response <- unique(K_C$Response)
+    unique_age <- unique(K_C$Age)
+    unique_gender <- unique(K_C$Gender)
+    unique_RE <- unique(K_C$RaceEthnicity)
+    unique_RF <- unique(K_C$RiskFactor)
+    print(unique(K_C$Category))
+      
+  # Print the unique years
+    print(unique_years)
+    print(unique_response)
+    print(unique_age)
+    print(unique_gender)
+    print(unique_RE)
+    print(unique_RF)
+
+  # Filter the K_C dataset
+    Keratitis <- K_C %>%
+      filter(Age == "All ages",
+             Gender == "All genders",
+             RaceEthnicity == "All races",
+             RiskFactor == "All patients")
+  
+  # View the first few rows of the filtered dataset
+    head(Keratitis)
+
+
+  # National Data
+    file_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/K_National.xlsx"    
+    K_National <- read_excel(file_path, sheet = 1)
+
+  # State Data  
+    file_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/K_States.xlsx"    
+    K_State <- read_excel(file_path, sheet = 1)
+    
+    Keratitis_State <- K_State %>%
+      filter(Age == "All ages",
+             Gender == "All genders",
+             RaceEthnicity == "All races",
+             RiskFactor == "All patients")
+```
+
+
+
+```{r Tables for primary outcomes}
+  # Define the output folder
+    output_folder <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Tables"
+  
+  # 1. Age Table
+    age_table <- K_National %>%
+      group_by(Age) %>%
+      summarise(
+        MeanValue = round(mean(Data_Value, na.rm = TRUE), 2),
+        MedianValue = round(median(Data_Value, na.rm = TRUE), 2),
+        MeanLowLimit = round(mean(Low_Confidence_limit, na.rm = TRUE), 2),
+        MedianLowLimit = round(median(Low_Confidence_limit, na.rm = TRUE), 2),
+        MeanHighLimit = round(mean(High_Confidence_Limit, na.rm = TRUE), 2),
+        MedianHighLimit = round(median(High_Confidence_Limit, na.rm = TRUE), 2)
+      ) %>%
+      arrange(desc(Age == "All ages"))
+    
+    write.csv(age_table, file = file.path(output_folder, "Age_Table.csv"), row.names = FALSE)
+  
+  # 2. Gender Table
+    gender_table <- K_National %>%
+      group_by(Gender) %>%
+      summarise(
+        MeanValue = round(mean(Data_Value, na.rm = TRUE), 2),
+        MedianValue = round(median(Data_Value, na.rm = TRUE), 2),
+        MeanLowLimit = round(mean(Low_Confidence_limit, na.rm = TRUE), 2),
+        MedianLowLimit = round(median(Low_Confidence_limit, na.rm = TRUE), 2),
+        MeanHighLimit = round(mean(High_Confidence_Limit, na.rm = TRUE), 2),
+        MedianHighLimit = round(median(High_Confidence_Limit, na.rm = TRUE), 2)
+      ) %>%
+      arrange(desc(Gender == "All genders"))
+    
+    write.csv(gender_table, file = file.path(output_folder, "Gender_Table.csv"), row.names = FALSE)
+  
+  # 3. RaceEthnicity Table
+    race_table <- K_National %>%
+      group_by(RaceEthnicity) %>%
+      summarise(
+        MeanValue = round(mean(Data_Value, na.rm = TRUE), 2),
+        MedianValue = round(median(Data_Value, na.rm = TRUE), 2),
+        MeanLowLimit = round(mean(Low_Confidence_limit, na.rm = TRUE), 2),
+        MedianLowLimit = round(median(Low_Confidence_limit, na.rm = TRUE), 2),
+        MeanHighLimit = round(mean(High_Confidence_Limit, na.rm = TRUE), 2),
+        MedianHighLimit = round(median(High_Confidence_Limit, na.rm = TRUE), 2)
+      ) %>%
+      arrange(desc(RaceEthnicity == "All races"))
+    
+    write.csv(race_table, file = file.path(output_folder, "RaceEthnicity_Table.csv"), row.names = FALSE)
+  
+  # 4. RiskFactor Table
+    riskfactor_table <- K_National %>%
+      group_by(RiskFactor) %>%
+      summarise(
+        MeanValue = round(mean(Data_Value, na.rm = TRUE), 2),
+        MedianValue = round(median(Data_Value, na.rm = TRUE), 2),
+        MeanLowLimit = round(mean(Low_Confidence_limit, na.rm = TRUE), 2),
+        MedianLowLimit = round(median(Low_Confidence_limit, na.rm = TRUE), 2),
+        MeanHighLimit = round(mean(High_Confidence_Limit, na.rm = TRUE), 2),
+        MedianHighLimit = round(median(High_Confidence_Limit, na.rm = TRUE), 2)
+      ) %>%
+      arrange(desc(RiskFactor == "All patients"))
+    
+    write.csv(riskfactor_table, file = file.path(output_folder, "RiskFactor_Table.csv"), row.names = FALSE)
+
+
+```
+
+
+
+```{r Rank-Sums across all demographics}
+  # Define a function to perform Wilcoxon Rank-Sum test and return the p-value
+    perform_wilcoxon <- function(data, group_column, reference_group, comparison_groups, value_column = "Data_Value") {
+      results <- data.frame(
+        Group = character(),
+        PValue = numeric(),
+        stringsAsFactors = FALSE
+      )
+      
+      for (group in comparison_groups) {
+        test_result <- wilcox.test(
+          data[[value_column]][data[[group_column]] == reference_group],
+          data[[value_column]][data[[group_column]] == group],
+          alternative = "two.sided",
+          exact = FALSE
+        )
+        # Add the group and formatted p-value
+        results <- rbind(results, data.frame(Group = group, PValue = formatC(test_result$p.value, format = "f", digits = 4)))
+      }
+      return(results)
+    }
+  
+  # 1. Age comparisons
+    age_reference <- "All ages"
+    age_comparisons <- c("0-17 years", "18 years and older", "18-39 years", "40 years and older", 
+                         "40-64 years", "65 years and older", "65-84 years", "85 years and older")
+    
+    age_results <- perform_wilcoxon(K_National, "Age", age_reference, age_comparisons)
+  
+  # 2. Gender comparisons
+    gender_reference <- "All genders"
+    gender_comparisons <- c("Female", "Male")
+    
+    gender_results <- perform_wilcoxon(K_National, "Gender", gender_reference, gender_comparisons)
+  
+  # 3. RaceEthnicity comparisons
+    race_reference <- "All races"
+    race_comparisons <- c("Asian", "Black, non-Hispanic", "Hispanic, any race", "North American Native", 
+                          "Other", "White, non-Hispanic")
+    
+    race_results <- perform_wilcoxon(K_National, "RaceEthnicity", race_reference, race_comparisons)
+  
+  # 4. RiskFactor comparisons
+    riskfactor_reference <- "All patients"
+    riskfactor_comparisons <- c("Diabetes", "Hypertension")
+    
+    riskfactor_results <- perform_wilcoxon(K_National, "RiskFactor", riskfactor_reference, riskfactor_comparisons)
+    
+  # Save results to CSV
+    write.csv(age_results, file = file.path(output_folder, "Wilcoxon_Age_Results.csv"), row.names = FALSE)
+    write.csv(gender_results, file = file.path(output_folder, "Wilcoxon_Gender_Results.csv"), row.names = FALSE)
+    write.csv(race_results, file = file.path(output_folder, "Wilcoxon_RaceEthnicity_Results.csv"), row.names = FALSE)
+    write.csv(riskfactor_results, file = file.path(output_folder, "Wilcoxon_RiskFactor_Results.csv"), row.names = FALSE)
+      
+```
+
+
+
+```{r Subsetting tables}
+# Define the output folder
+output_folder <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Tables"
+
+# Function to calculate means and medians for intersectional groups
+calculate_means_medians <- function(data, group_columns) {
+  data %>%
+    group_by(across(all_of(group_columns))) %>%
+    summarise(
+      MeanValue = round(mean(Data_Value, na.rm = TRUE), 2),
+      MedianValue = round(median(Data_Value, na.rm = TRUE), 2),
+      MeanLowLimit = round(mean(Low_Confidence_limit, na.rm = TRUE), 2),
+      MedianLowLimit = round(median(Low_Confidence_limit, na.rm = TRUE), 2),
+      MeanHighLimit = round(mean(High_Confidence_Limit, na.rm = TRUE), 2),
+      MedianHighLimit = round(median(High_Confidence_Limit, na.rm = TRUE), 2),
+      .groups = "drop"
+    )
+}
+
+# Function to perform Wilcoxon Rank-Sum tests for intersectional groups
+perform_intersectional_wilcoxon <- function(data, reference_group, group_columns, value_column = "Data_Value") {
+  data <- data %>%
+    mutate(Group = interaction(across(all_of(group_columns)), sep = " + "))
+  
+  reference_data <- data %>%
+    filter(Group == reference_group)
+  
+  comparison_groups <- setdiff(unique(data$Group), reference_group)
+  
+  results <- data.frame(
+    Group = character(),
+    PValue = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (group in comparison_groups) {
+    group_data <- data %>%
+      filter(Group == group)
+    
+    if (nrow(reference_data) > 0 & nrow(group_data) > 0) {
+      test_result <- wilcox.test(
+        reference_data[[value_column]],
+        group_data[[value_column]],
+        alternative = "two.sided",
+        exact = FALSE
+      )
+      results <- rbind(results, data.frame(Group = group, PValue = formatC(test_result$p.value, format = "f", digits = 4)))
+    }
+  }
+  return(results)
+}
+
+# 1. Age + Gender
+age_gender_means_medians <- calculate_means_medians(K_National, c("Age", "Gender"))
+write.csv(age_gender_means_medians, file = file.path(output_folder, "Age_Gender_Means_Medians.csv"), row.names = FALSE)
+
+age_gender_wilcoxon <- perform_intersectional_wilcoxon(K_National, "All ages + All genders", c("Age", "Gender"))
+write.csv(age_gender_wilcoxon, file = file.path(output_folder, "Age_Gender_Wilcoxon.csv"), row.names = FALSE)
+
+# 2. Gender + RaceEthnicity
+gender_race_means_medians <- calculate_means_medians(K_National, c("Gender", "RaceEthnicity"))
+write.csv(gender_race_means_medians, file = file.path(output_folder, "Gender_Race_Means_Medians.csv"), row.names = FALSE)
+
+gender_race_wilcoxon <- perform_intersectional_wilcoxon(K_National, "All genders + All races", c("Gender", "RaceEthnicity"))
+write.csv(gender_race_wilcoxon, file = file.path(output_folder, "Gender_Race_Wilcoxon.csv"), row.names = FALSE)
+
+# 3. Gender + RiskFactor
+gender_risk_means_medians <- calculate_means_medians(K_National, c("Gender", "RiskFactor"))
+write.csv(gender_risk_means_medians, file = file.path(output_folder, "Gender_Risk_Means_Medians.csv"), row.names = FALSE)
+
+gender_risk_wilcoxon <- perform_intersectional_wilcoxon(K_National, "All genders + All patients", c("Gender", "RiskFactor"))
+write.csv(gender_risk_wilcoxon, file = file.path(output_folder, "Gender_Risk_Wilcoxon.csv"), row.names = FALSE)
+
+# 4. RaceEthnicity + RiskFactor
+race_risk_means_medians <- calculate_means_medians(K_National, c("RaceEthnicity", "RiskFactor"))
+write.csv(race_risk_means_medians, file = file.path(output_folder, "Race_Risk_Means_Medians.csv"), row.names = FALSE)
+
+race_risk_wilcoxon <- perform_intersectional_wilcoxon(K_National, "All races + All patients", c("RaceEthnicity", "RiskFactor"))
+write.csv(race_risk_wilcoxon, file = file.path(output_folder, "Race_Risk_Wilcoxon.csv"), row.names = FALSE)
+
+```
+
+
+
+```{r Figures for keratitis prevalence rates by demographics}
+library(ggpubr)
+library(RColorBrewer)
+
+# Plot 1: Box plot for Data_Value by Gender
+# Get the number of unique Gender levels and set colors
+num_genders <- length(unique(K_C$Gender))
+gender_colors <- brewer.pal(n = min(num_genders, 8), "Set2")
+
+# Define pairwise comparisons for Gender groups
+gender_comparisons <- combn(unique(K_C$Gender), 2, simplify = FALSE)
+
+# Box plot for Gender
+p_gender <- ggboxplot(K_C, x = "Gender", y = "Data_Value",
+                      color = "Gender", 
+                      palette = gender_colors, 
+                      add = "none")  # No jitter points
+
+# Add p-values for pairwise comparisons and position global p-value to the right
+p_gender + 
+  stat_compare_means(comparisons = gender_comparisons) + # Add pairwise comparison p-values
+  stat_compare_means(label.y = max(K_C$Data_Value, na.rm = TRUE) * 1.1, hjust = 1.5) + # Global p-value to the right
+  labs(title = "Data_Value by Gender")
+
+# Plot 2: Box plot for Data_Value by RiskFactor
+# Get the number of unique RiskFactor levels and set colors
+num_riskfactors <- length(unique(K_C$RiskFactor))
+riskfactor_colors <- brewer.pal(n = min(num_riskfactors, 8), "Set3")
+
+# Define pairwise comparisons for RiskFactor groups
+riskfactor_comparisons <- combn(unique(K_C$RiskFactor), 2, simplify = FALSE)
+
+# Box plot for RiskFactor
+p_riskfactor <- ggboxplot(K_C, x = "RiskFactor", y = "Data_Value",
+                          color = "RiskFactor", 
+                          palette = riskfactor_colors, 
+                          add = "none")  # No jitter points
+
+# Add p-values for pairwise comparisons and position global p-value to the right
+p_riskfactor + 
+  stat_compare_means(comparisons = riskfactor_comparisons) + # Add pairwise comparison p-values
+  stat_compare_means(label.y = max(K_C$Data_Value, na.rm = TRUE) * 1.1, hjust = 1.5) + # Global p-value to the right
+  labs(title = "Data_Value by Risk Factor")
+
+```
+
+
+
+```{r Data import & management of ACS poverty & county-level race/ethnicity data}
+
+  # List of years you want to download data for
+    years <- 2014:2019
+  
+  # Variables to download: Poverty, GINI index, and racial/ethnic breakdowns
+    variables <- c(
+      poverty = "B17001_002",
+      gini = "B19083_001",
+      total_pop = "B01003_001",
+      white_pop = "B02001_002",
+      black_pop = "B02001_003",
+      native_pop = "B02001_004",
+      asian_pop = "B02001_005",
+      pacific_pop = "B02001_006",
+      hispanic_pop = "B03002_012",
+      under_18_male = "B01001_003",
+      under_18_female = "B01001_027",
+      over_65_male = "B01001_020",
+      over_65_female = "B01001_044",
+      labor_force = "B23025_003",
+      employed = "B23025_004",
+      unemployed = "B23025_005",
+      less_than_hs = "B15003_002",
+      hs_grad = "B15003_017",
+      bachelors_or_higher = c("B15003_022", "B15003_023"),
+      insured = "B27010_001",
+      uninsured = "B27010_017"
+    )
+
+  
+  # Function to download data for each year at the county level
+    county_data_all_years <- lapply(years, function(year) {
+      get_acs(geography = "county",
+              variables = variables,
+              year = year,
+              survey = "acs5",
+              geometry = TRUE) %>%
+        mutate(year = year)
+    })
+
+  # Combine the list of sf objects into a single data frame
+    combined_county_data <- do.call(rbind, county_data_all_years)    
+    
+  # Pivot the dataset so that each variable has its own estimate and moe columns
+    county_data_wide <- combined_county_data %>%
+      pivot_wider(names_from = variable, values_from = c(estimate, moe))
+  
+  # View the first few rows to confirm that the data has been transformed properly
+    head(county_data_wide)   
+
+  # Calculate percentages & derived metrics        
+    county_data_wide <- county_data_wide %>%
+      mutate(
+        pov_pct = estimate_poverty / estimate_total_pop * 100,
+        white_pct = estimate_white_pop / estimate_total_pop * 100,
+        nw_pct = 1 - white_pct,
+        black_pct = estimate_black_pop / estimate_total_pop * 100,
+        native_pct = estimate_native_pop / estimate_total_pop * 100,
+        asian_pct = estimate_asian_pop / estimate_total_pop * 100,
+        pacific_pct = estimate_pacific_pop / estimate_total_pop * 100,
+        hispanic_pct = estimate_hispanic_pop / estimate_total_pop * 100,
+        under_18_pct = (estimate_under_18_male + estimate_under_18_female) / estimate_total_pop * 100,
+        over_65_pct = (estimate_over_65_male + estimate_over_65_female) / estimate_total_pop * 100,
+        labor_force_pct = estimate_labor_force / estimate_total_pop * 100,
+        employment_rate = estimate_employed / estimate_labor_force * 100,
+        unemployment_rate = estimate_unemployed / estimate_labor_force * 100,
+        # Adjust for education variables
+        hs_or_higher_pct = (estimate_hs_grad + estimate_bachelors_or_higher1 + estimate_bachelors_or_higher2) / estimate_total_pop * 100,
+        uninsured_pct = estimate_uninsured / estimate_total_pop * 100
+      )
+
+    cd_2014 <- county_data_wide %>%
+      filter(year == 2014 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))    
+    
+  # Plot for Contiguous US for poverty in 2014
+    ggplot(cd_2014) +
+      geom_sf(aes(fill = pov_pct), color = NA) +
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+      labs(title = "County Level Poverty Rates - Contiguous US",
+           fill = "% Living in Poverty") +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+    
+  # Plot for Contiguous US for income inequality in 2014
+    ggplot(cd_2014) +
+      geom_sf(aes(fill = estimate_gini), color = NA) +
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+      labs(title = "County Level Inequality - Contiguous US",
+           fill = "Gini Coefficient of Inequality") +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+```
+
+
+
+```{r Data import & management of ACS poverty & state-level race/ethnicity data}
+
+  # List of years you want to download data for
+    years <- 2014:2019
+  
+  # Variables to download: Poverty, GINI index, and racial/ethnic breakdowns
+    variables <- c(
+      poverty = "B17001_002",
+      gini = "B19083_001",
+      total_pop = "B01003_001",
+      white_pop = "B02001_002",
+      black_pop = "B02001_003",
+      native_pop = "B02001_004",
+      asian_pop = "B02001_005",
+      pacific_pop = "B02001_006",
+      hispanic_pop = "B03002_012",
+      under_18_male = "B01001_003",
+      under_18_female = "B01001_027",
+      over_65_male = "B01001_020",
+      over_65_female = "B01001_044",
+      labor_force = "B23025_003",
+      employed = "B23025_004",
+      unemployed = "B23025_005",
+      less_than_hs = "B15003_002",
+      hs_grad = "B15003_017",
+      bachelors_or_higher = c("B15003_022", "B15003_023"),
+      insured = "B27010_001",
+      uninsured = "B27010_017"
+    )
+  
+  # Function to download data for each year at the state level
+    state_data_all_years <- lapply(years, function(year) {
+      get_acs(geography = "state",
+              variables = variables,
+              year = year,
+              survey = "acs5",
+              geometry = TRUE) %>%
+        mutate(year = year)
+    })
+  
+  # Combine the list of sf objects into a single data frame
+    combined_state_data <- do.call(rbind, state_data_all_years)    
+  
+  # Pivot the dataset so that each variable has its own estimate and moe columns
+    state_data_wide <- combined_state_data %>%
+      pivot_wider(names_from = variable, values_from = c(estimate, moe))
+  
+  # Calculate percentages & derived metrics
+    state_data_wide <- state_data_wide %>%
+      mutate(
+        pov_pct = estimate_poverty / estimate_total_pop * 100,
+        white_pct = estimate_white_pop / estimate_total_pop * 100,
+        nw_pct = 1 - white_pct,
+        black_pct = estimate_black_pop / estimate_total_pop * 100,
+        native_pct = estimate_native_pop / estimate_total_pop * 100,
+        asian_pct = estimate_asian_pop / estimate_total_pop * 100,
+        pacific_pct = estimate_pacific_pop / estimate_total_pop * 100,
+        hispanic_pct = estimate_hispanic_pop / estimate_total_pop * 100,
+        under_18_pct = (estimate_under_18_male + estimate_under_18_female) / estimate_total_pop * 100,
+        over_65_pct = (estimate_over_65_male + estimate_over_65_female) / estimate_total_pop * 100,
+        labor_force_pct = estimate_labor_force / estimate_total_pop * 100,
+        employment_rate = estimate_employed / estimate_labor_force * 100,
+        unemployment_rate = estimate_unemployed / estimate_labor_force * 100,
+        # Adjust for education variables
+        hs_or_higher_pct = (estimate_hs_grad + estimate_bachelors_or_higher1 + estimate_bachelors_or_higher2) / estimate_total_pop * 100,
+        uninsured_pct = estimate_uninsured / estimate_total_pop * 100
+      )
+  
+  # Filter for 2014 data and exclude non-contiguous US states
+    sd_2014 <- state_data_wide %>%
+      filter(year == 2014 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))    
+    
+  # Plot for Contiguous US for poverty in 2014
+    ggplot(sd_2014) +
+      geom_sf(aes(fill = pov_pct), color = NA) +
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+      labs(title = "State Level Poverty Rates - Contiguous US",
+           fill = "% Living in Poverty") +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+  
+  # Plot for Contiguous US for income inequality in 2014
+    ggplot(sd_2014) +
+      geom_sf(aes(fill = estimate_gini), color = NA) +
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+      labs(title = "State Level Inequality - Contiguous US",
+           fill = "Gini Coefficient of Inequality") +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+
+
+
+```
+
+
+
+```{r Merging Data by counties}
+
+  # Create a new column in Keratitis that combines LocationDesc and State
+    Keratitis <- Keratitis %>%
+      mutate(NAME = paste(LocationDesc, State, sep = ", "))
+
+  # Find values in county_data_wide that are not in Keratitis
+    unmatched_names <- setdiff(county_data_wide$NAME, Keratitis$NAME)
+    print(unmatched_names)  # Display any mismatches in NAME
+      
+  # Create a merged dataset with all counties in county_data_wide and fill missing values with NA for unmatched rows
+    PovKer <- county_data_wide %>%
+      left_join(Keratitis, by = c("NAME" = "NAME", "year" = "YearEnd"))
+  
+  # View the first few rows of the merged dataset to verify
+    head(PovKer)
+
+```
+
+
+
+```{r Merging Data by States}
+
+  # Find values in state_data_wide that are not in Keratitis_State
+    unmatched_names_state <- setdiff(state_data_wide$NAME, Keratitis_State$LocationDesc)
+    print(unmatched_names_state)  # Display any mismatches in LocationDesc
+  
+  # Create a merged dataset with all states in state_data_wide and fill missing values with NA for unmatched rows
+    PovKer_State <- state_data_wide %>%
+      left_join(Keratitis_State, by = c("NAME" = "LocationDesc", "year" = "YearEnd"))
+  
+  # View the first few rows of the merged dataset to verify
+    head(PovKer_State)
+```
+
+
+
+```{r Maps of keratitis prevalence by year in the contig US by county}
+
+  # Load necessary libraries
+    library(dplyr)
+    library(ggplot2)
+    library(sf)
+    library(gridExtra)
+  
+  # Split PovKer by year and filter for contiguous US counties
+    PovKer2014 <- PovKer %>%
+      filter(year == 2014 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer2015 <- PovKer %>%
+      filter(year == 2015 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer2016 <- PovKer %>%
+      filter(year == 2016 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer2017 <- PovKer %>%
+      filter(year == 2017 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer2018 <- PovKer %>%
+      filter(year == 2018 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer2019 <- PovKer %>%
+      filter(year == 2019 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+  
+  # List to loop through years and generate plots
+    PovKer_years <- list(PovKer2014, PovKer2015, PovKer2016, PovKer2017, PovKer2018, PovKer2019)
+    years <- 2014:2019
+  
+  # Loop to generate and print heatmaps for each year
+    for (i in seq_along(PovKer_years)) {
+      p <- ggplot(PovKer_years[[i]]) +
+        geom_sf(aes(fill = Data_Value), color = NA) +  # Fill with Data_Value, no border color
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +  # Plasma color scale; NA as grey
+        labs(title = paste("County Level Keratitis Prevalence Rates (", years[i], ")", sep = ""),
+             fill = "Keratitis Prevalence Rate") +
+        theme_minimal() +
+        theme(legend.position = "bottom")  # Adjust legend position for clarity
+      
+      print(p)  # Ensure each plot is displayed in the loop
+    }
+
+
+```
+
+
+
+```{r Six-panel county prev plots}
+# Split PovKer by year, cap Data_Value at 6, and filter for contiguous US counties
+PovKer2014 <- PovKer %>%
+  filter(year == 2014 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+PovKer2015 <- PovKer %>%
+  filter(year == 2015 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+PovKer2016 <- PovKer %>%
+  filter(year == 2016 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+PovKer2017 <- PovKer %>%
+  filter(year == 2017 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+PovKer2018 <- PovKer %>%
+  filter(year == 2018 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+PovKer2019 <- PovKer %>%
+  filter(year == 2019 & !grepl("Alaska|Hawaii|Puerto Rico", NAME)) %>%
+  mutate(Data_Value = ifelse(Data_Value >= 6, 6, Data_Value))
+
+# List of county-level datasets for each year
+PovKer_years <- list(PovKer2014, PovKer2015, PovKer2016, PovKer2017, PovKer2018, PovKer2019)
+years <- 2014:2019
+
+# Determine the overall range of Data_Value across all datasets
+data_value_range <- range(
+  unlist(lapply(PovKer_years, function(df) df$Data_Value)),
+  na.rm = TRUE
+)
+
+# Create a list to store plots
+plots <- list()
+
+# Loop to generate plots for each year with no borders and consistent scale
+for (i in seq_along(PovKer_years)) {
+  plots[[i]] <- ggplot(PovKer_years[[i]]) +
+    geom_sf(aes(fill = Data_Value), color = NA) +  # No borders
+    scale_fill_viridis_c(
+      option = "plasma", 
+      na.value = "grey", 
+      limits = data_value_range  # Set consistent upper and lower bounds
+    ) +
+    labs(
+      title = paste("County Level Keratitis Prevalence Rates (", years[i], ")", sep = ""),
+      fill = "Keratitis Prevalence Rate (Capped at 6)"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",  # Position legend below each plot
+      plot.title = element_text(size = 12, hjust = 0.5)  # Center and resize titles
+    )
+}
+
+# Arrange the six plots into a grid (2 rows, 3 columns)
+six_panel_plot <- grid.arrange(
+  grobs = plots,
+  nrow = 2,
+  ncol = 3,
+  top = "County Level Keratitis Prevalence Rates (2014-2019, Capped at 6)"  # Main title
+)
+
+
+```
+
+
+
+```{r Maps of keratitis prevalence by year in the contig US by State}
+
+  # Split PovKer_State by year and filter for contiguous US states
+    PovKer_State2014 <- PovKer_State %>%
+      filter(year == 2014 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer_State2015 <- PovKer_State %>%
+      filter(year == 2015 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer_State2016 <- PovKer_State %>%
+      filter(year == 2016 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer_State2017 <- PovKer_State %>%
+      filter(year == 2017 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer_State2018 <- PovKer_State %>%
+      filter(year == 2018 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    
+    PovKer_State2019 <- PovKer_State %>%
+      filter(year == 2019 & !grepl("Alaska|Hawaii|Puerto Rico", NAME))
+  
+  # List of state-level datasets for each year
+  PovKer_State_years <- list(
+    PovKer_State2014,
+    PovKer_State2015,
+    PovKer_State2016,
+    PovKer_State2017,
+    PovKer_State2018,
+    PovKer_State2019
+  )
+  years <- 2014:2019
+  
+  # Determine the overall range of Data_Value across all datasets
+  data_value_range <- range(
+    unlist(lapply(PovKer_State_years, function(df) df$Data_Value)), 
+    na.rm = TRUE
+  )
+  
+  # Create a list to store plots
+  plots <- list()
+
+  library(gridExtra)  # For arranging multiple plots into a single grid
+    
+  # Loop to generate plots for each year with thin borders and no grey background
+    for (i in seq_along(PovKer_State_years)) {
+      plots[[i]] <- ggplot(PovKer_State_years[[i]]) +
+        geom_sf(aes(fill = Data_Value), color = "#d3d3d3", size = 0.2) +  # Add thin light borders
+        scale_fill_viridis_c(
+          option = "plasma", 
+          na.value = "grey", 
+          limits = data_value_range  # Set consistent upper and lower bounds
+        ) +
+        labs(
+          title = paste("State Level Keratitis Prevalence Estimates (", years[i], ")", sep = ""),
+          fill = "Keratitis Prevalence Estimate"
+        ) +
+        theme_minimal() +  # Minimal theme as a base
+        theme(
+          panel.background = element_rect(fill = "white", color = NA),  # Set panel background to white
+          panel.grid = element_blank(),  # Remove gridlines
+          legend.position = "bottom",  # Position legend below each plot
+          plot.title = element_text(size = 12, hjust = 0.5)  # Center and resize titles
+        )
+    }
+  
+  # Arrange the six plots into a grid (2 rows, 3 columns)
+    six_panel_plot <- grid.arrange(
+      grobs = plots,
+      nrow = 2,
+      ncol = 3,
+      top = "State Level Keratitis Prevalence Rates (2014-2019)"  # Main title
+    )
+```
+
+
+
+```{r Dataset of mean values across the six years by county}
+
+  # Create the dataset with means of selected variables across six years, grouped by NAME only
+    PovKer_means <- PovKer %>%
+      group_by(NAME) %>%  # Group by NAME for each county
+      summarise(
+        GEOID = first(GEOID),  # Retain the first occurrence of GEOID for each NAME
+        geometry = first(geometry),  # Retain the first occurrence of geometry for each NAME
+        pov_pct = mean(pov_pct, na.rm = TRUE),
+        #estimate_gini = mean(estimate_gini, na.rm = TRUE),
+        Data_Value = mean(Data_Value, na.rm = FALSE),
+        Numerator = mean(Numerator, na.rm = TRUE)
+      ) %>%
+      ungroup()  # Remove grouping after summarising
+
+  # View the resulting dataset
+    print(PovKer_means)
+  
+```
+
+
+
+```{r Dataset of mean values across the six years by State}
+
+  # Create the dataset with means of selected variables across six years, grouped by NAME only
+    PovKer_State_means <- PovKer_State %>%
+      group_by(NAME) %>%  # Group by NAME for each state
+      summarise(
+        GEOID = first(GEOID),  # Retain the first occurrence of GEOID for each NAME
+        geometry = first(geometry),  # Retain the first occurrence of geometry for each NAME
+        pov_pct = mean(pov_pct, na.rm = TRUE),
+        #estimate_gini = mean(estimate_gini, na.rm = TRUE),
+        Data_Value = mean(Data_Value, na.rm = TRUE),
+        Numerator = mean(Numerator, na.rm = TRUE)
+      ) %>%
+      ungroup()  # Remove grouping after summarising
+  
+  # View the resulting dataset
+    print(PovKer_State_means)
+
+```
+
+
+
+```{r Maps using mean values at the county level}
+
+  # Subset the data
+  
+  # Contiguous US (excluding Alaska and Hawaii)
+    PovKermeans_contiguous <- PovKer_means %>%
+      filter(!grepl("Alaska|Hawaii|Puerto Rico", NAME))
+    PovKermeans_contiguous$KerPrevRates <- PovKermeans_contiguous$Data_Value  
+  
+  # Hawaii only
+    PovKermeans_Hawaii <- PovKer_means %>%
+      filter(grepl("Hawaii", NAME))
+  
+  # Alaska only
+    PovKermeans_Alaska <- PovKer_means %>%
+      filter(grepl("Alaska", NAME))
+    
+  # Create maps for each subset
+  
+    # Plot for Contiguous US
+      ggplot(PovKermeans_contiguous) +
+        geom_sf(aes(fill = Data_Value), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "County Level Keratitis Prevalence Rates - Contiguous US",
+             fill = "Data Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+    
+    # Plot for Hawaii
+      ggplot(PovKermeans_Hawaii) +
+        geom_sf(aes(fill = Data_Value), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "County Level Keratitis Prevalence Rates - Hawaii",
+             fill = "Data Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+  
+
+  # Create maps of poverty
+  
+    # Plot for Contiguous US for poverty
+      ggplot(PovKermeans_contiguous) +
+        geom_sf(aes(fill = pov_pct), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "County Level Poverty Rates - Contiguous US, 2014-2019 Mean",
+             fill = "% Living in Poverty") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+      
+    # Plot for Contiguous US for income inequality
+      ggplot(PovKermeans_contiguous) +
+        geom_sf(aes(fill = estimate_gini), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "2014-2019 Mean Gini Index of Income Inequality Levels - Contiguous US",
+             fill = "Gini Index Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+      
+      
+      
+  # Cap Data_Value at 5 to reduce skew
+  PovKermeans_contiguous_unskewed <- PovKermeans_contiguous %>%
+    mutate(
+      Data_Value = ifelse(Data_Value >= 5, 5, Data_Value) # Cap at 5
+    )
+  
+  # Create the updated map
+  ggplot(PovKermeans_contiguous_unskewed) +
+    geom_sf(aes(fill = Data_Value), color = NA) +
+    scale_fill_viridis_c(
+      option = "plasma", 
+      na.value = "grey", 
+      limits = c(0, 5), # Ensure the scale is consistent with the capped values
+      oob = scales::squish # Handles out-of-bounds values gracefully
+    ) +
+    labs(
+      title = "County Level Keratitis Prevalence Rates - Contiguous US",
+      subtitle = "Capped at 5 to reduce skew",
+      fill = "Data Value (capped at 5)"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  
+  
+```
+
+
+
+```{r Maps using mean values at the state level}
+  # Subset the state-level data
+  
+    # Contiguous US (excluding Alaska, Hawaii, and Puerto Rico)
+      PovKerStatemeans_contiguous <- PovKer_State_means %>%
+        filter(!grepl("Alaska|Hawaii|Puerto Rico", NAME))
+      PovKerStatemeans_contiguous$KerPrevRates <- PovKerStatemeans_contiguous$Data_Value  
+    
+    # Hawaii only
+      PovKerStatemeans_Hawaii <- PovKer_State_means %>%
+        filter(grepl("Hawaii", NAME))
+      #PovKerStatemeans_Hawaii$KerPrevRates <- PovKerStatemeans_Hawaii$Data_Value  
+          
+    # Alaska only
+      PovKerStatemeans_Alaska <- PovKer_State_means %>%
+        filter(grepl("Alaska", NAME))
+      #PovKerStatemeans_Alaska$KerPrevRates <- PovKerStatemeans_Alaska$Data_Value  
+       
+    # Create maps for each subset
+    
+    # Plot for Contiguous US
+      ggplot(PovKerStatemeans_contiguous) +
+        geom_sf(aes(fill = Data_Value), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "State Level Keratitis Prevalence Rates - Contiguous US",
+             fill = "Data Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+    
+    # Plot for Hawaii
+      ggplot(PovKerStatemeans_Hawaii) +
+        geom_sf(aes(fill = Data_Value), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "State Level Keratitis Prevalence Rates - Hawaii",
+             fill = "Data Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+    
+    # Create maps of poverty
+    
+    # Plot for Contiguous US for poverty
+      ggplot(PovKerStatemeans_contiguous) +
+        geom_sf(aes(fill = pov_pct), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "State Level Poverty Rates - Contiguous US, 2014-2019 Mean",
+             fill = "% Living in Poverty") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+    
+    # Plot for Contiguous US for income inequality
+      ggplot(PovKerStatemeans_contiguous) +
+        geom_sf(aes(fill = estimate_gini), color = NA) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(title = "2014-2019 Mean Gini Index of Income Inequality Levels - Contiguous US",
+             fill = "Gini Index Value") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+
+```
+
+
+
+```{r Purple orange bivar}
+library(cowplot)
+
+  # Update the category column in PovKermeans_contiguous to reflect Keratitis and Poverty levels
+    PovKermeans_contiguous <- PovKermeans_contiguous %>%
+      mutate(
+        category = case_when(
+          KerPrevRates >= median(KerPrevRates, na.rm = TRUE) & pov_pct >= median(pov_pct, na.rm = TRUE) ~ "High Keratitis & High Poverty",
+          KerPrevRates < median(KerPrevRates, na.rm = TRUE) & pov_pct >= median(pov_pct, na.rm = TRUE) ~ "Low Keratitis & High Poverty",
+          KerPrevRates >= median(KerPrevRates, na.rm = TRUE) & pov_pct < median(pov_pct, na.rm = TRUE) ~ "High Keratitis & Low Poverty",
+          KerPrevRates < median(KerPrevRates, na.rm = TRUE) & pov_pct < median(pov_pct, na.rm = TRUE) ~ "Low Keratitis & Low Poverty",
+          TRUE ~ NA_character_
+        )
+      )
+  
+  # Calculate counts and percentages for each new category, including NA
+    total_count <- nrow(PovKermeans_contiguous)
+    category_counts <- PovKermeans_contiguous %>%
+      count(category, .drop = FALSE) %>%  # Count each category, including NAs
+      mutate(
+        percent = (n / total_count) * 100,  # Calculate the percentage
+        label = ifelse(is.na(category), "NA", 
+                       paste0(category, ": ", n, " (", round(percent, 1), "%) counties"))
+      )
+  
+  # Define the color scheme with an extra color for NA values
+    color_scheme <- c(
+      "High Keratitis & High Poverty" = "#E58AA8",   # Deep orange
+      "Low Keratitis & High Poverty" = "#9B8EEA",    # Light peachy-orange
+      "High Keratitis & Low Poverty" = "#F5A365",    # Deep purple
+      "Low Keratitis & Low Poverty" = "#f0f0f0",     # Lighter purple
+      "NA" = "black"                               # Grey for NA values
+    )
+
+ 
+    
+  # Plot the map with updated legend labels
+    ggplot(PovKermeans_contiguous) +
+      geom_sf(aes(fill = category), color = NA) +
+      scale_fill_manual(
+        values = color_scheme, 
+        name = "Keratitis & Poverty Categories",
+        labels = category_counts$label
+      ) +
+      labs(
+        title = "Keratitis Rates and Poverty Levels by County",
+        subtitle = "Contiguous US Counties",
+        fill = "Category"
+      ) +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+
+
+
+
+
+
+
+  # Define the 3x3 custom palette with swapped colors (purple for poverty, gold for keratitis)
+    purplegold <- c(
+      "1-1" = "#e8e8e8", # Low poverty, low keratitis
+      "2-1" = "#cbb8d7", # Moderate poverty, low keratitis
+      "3-1" = "#9972af", # High poverty, low keratitis
+      "1-2" = "#e4d9ac", # Low poverty, moderate keratitis
+      "2-2" = "#c8ada0", # Moderate poverty, moderate keratitis
+      "3-2" = "#976b82", # High poverty, moderate keratitis
+      "1-3" = "#c8b35a", # Low poverty, high keratitis
+      "2-3" = "#af8e53", # Moderate poverty, high keratitis
+      "3-3" = "#804d36"  # High poverty, high keratitis
+    )
+  
+    library(biscale)
+  # Create bivariate classes
+    PovKermeans_bi <- bi_class(
+      PovKermeans_contiguous,
+      x = pov_pct,          # Poverty percentage
+      y = KerPrevRates,     # Keratitis prevalence rates
+      style = "quantile",   # Quantile classification
+      dim = 3               # 3x3 grid
+    )
+  
+  # Create the bivariate map without a legend
+    bivar_map <- ggplot() +
+      geom_sf(data = PovKermeans_bi, aes(fill = bi_class), color = NA) +
+      scale_fill_manual(values = purplegold) + # Apply the custom palette
+      labs(
+        title = "Bivariate Map: Keratitis and Poverty Levels by County"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "none", # No legend in the map
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+  
+  # Create a 3x3 cubed legend separately
+    bivar_legend <- bi_legend(
+      pal = purplegold,
+      dim = 3,
+      xlab = "Higher Poverty (Purple)",
+      ylab = "Higher Keratitis (Gold)",
+      size = 8
+    )
+    
+    library(cowplot)
+  
+  # Combine the map and the separate cubed legend
+    final_plot <- ggdraw() +
+      draw_plot(bivar_map, 0, 0, 1, 1) +       # Add the map
+      draw_plot(bivar_legend, 0.1, 0.1, 0.3, 0.3) # Add the legend in the bottom left corner
+  
+  # Save the final plot
+    ggsave("bivariate_keratitis_poverty_purplegold_no_inline_legend.png", plot = final_plot, width = 8, height = 6, dpi = 300)
+
+
+
+```
+
+
+
+```{r county-bivar using Dark Cyan}
+  # Create the bivariate map (unchanged from previous steps)
+  final_plot_dkcyan2 <- ggplot() +
+    geom_sf(data = PovKermeans_bi, aes(fill = bi_class), color = NA) +
+    bi_scale_fill(pal = "DkCyan2", dim = 3) + # Apply the DkCyan2 palette
+    labs(
+      title = "Bivariate Map: Keratitis and Poverty Levels by County",
+      #subtitle = "Using DkCyan2 Palette"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none", # No legend in the map
+      plot.title = element_text(size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  
+# Create the bivariate legend as a standalone figure
+legend_plot_dkcyan2 <- bi_legend(
+  pal = "DkCyan2",
+  dim = 3,
+  xlab = "Higher Poverty",
+  ylab = "Higher Keratitis",
+  size = 12
+)
+
+
+  
+  # Save the map without the legend
+  ggsave("bivariate_keratitis_poverty_dkcyan2.png", plot = final_plot_dkcyan2, width = 8, height = 6, dpi = 300)
+  
+  # Save the standalone legend
+# Save the standalone legend as an SVG file
+ggsave("bivariate_keratitis_poverty_dkcyan2_legend.svg", plot = legend_plot_dkcyan2, width = 4, height = 4, dpi = 300, bg = "transparent")
+```
+
+
+
+```{r 2x2 Map}
+refined_muted_pop_2x2 <- c(
+  "1-1" = "#f0f0f0", # Low poverty, low keratitis (light gray)
+  "2-1" = "#9B8EEA", # High poverty, low keratitis (muted purple)
+  "1-2" = "#F5A365", # Low poverty, high keratitis (warmer orange)
+  "2-2" = "#E58AA8"  # High poverty, high keratitis (muted pink)
+)
+
+library(ggplot2)
+library(biscale)
+library(cowplot)
+
+# Create bivariate classes
+PovKermeans_bi_2x2 <- bi_class(
+  PovKermeans_contiguous, # Your spatial dataset
+  x = pov_pct,            # Poverty percentage
+  y = KerPrevRates,       # Keratitis prevalence rates
+  style = "quantile",     # Quantile classification
+  dim = 2                 # 2x2 grid
+)
+
+# Create the bivariate map without a legend
+bivar_map_pop <- ggplot() +
+  geom_sf(data = PovKermeans_bi_2x2, aes(fill = bi_class), color = NA) +
+  scale_fill_manual(values = refined_muted_pop_2x2) + # Apply the POP palette
+  labs(
+    title = "Bivariate Map: Keratitis and Poverty Levels by County (POP Scheme)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none", # No legend in the map
+    plot.title = element_text(size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5)
+  )
+
+# Create a 2x2 cubed legend separately
+bivar_legend_pop <- bi_legend(
+  pal = refined_muted_pop_2x2,
+  dim = 2,
+  xlab = "Higher Poverty (Purple)",
+  ylab = "Higher Keratitis (Pink)",
+  size = 8
+)
+
+# Combine the map and the separate cubed legend
+final_plot_pop <- ggdraw() +
+  draw_plot(bivar_map_pop, 0, 0, 1, 1) +       # Add the map
+  draw_plot(bivar_legend_pop, 0.1, 0.1, 0.3, 0.3) # Add the legend in the bottom left corner
+
+# Print the final map
+final_plot_pop
+```
+
+
+
+```{r}
+
+  library(sf)
+  library(spdep)
+  library(ggplot2)
+  
+  # Generate neighbors with a larger threshold (300 km)
+    nb <- dnearneigh(st_centroid(PovKermeans_contiguous), d1 = 0, d2 = 300000)  # 300 km threshold
+  
+  # Create weights list
+    listw <- nb2listw(nb, style = "W")
+  
+  # Check for isolated geometries
+    isolated <- which(card(nb) == 0)
+    if (length(isolated) > 0) {
+      print("Still isolated geometries:")
+      print(PovKermeans_contiguous[isolated, ])
+    }
+
+  # Calculate Local Moran's I for Keratitis Prevalence Rates
+    lisa <- localmoran(
+      x = PovKermeans_contiguous$KerPrevRates,
+      listw = listw
+    )
+  
+  # Add LISA results to the dataset
+    PovKermeans_contiguous$LISA_I <- lisa[, 1]   # Local Moran's I statistic
+    PovKermeans_contiguous$LISA_p <- lisa[, 5]   # p-value
+  
+  # Identify significant clusters
+    PovKermeans_contiguous$significant <- PovKermeans_contiguous$LISA_p < 0.05
+    
+  # Classify significant clusters
+    PovKermeans_contiguous$quadrant <- with(
+      PovKermeans_contiguous,
+      case_when(
+        LISA_p < 0.05 & KerPrevRates > mean(KerPrevRates, na.rm = TRUE) &
+          lag.listw(listw, KerPrevRates) > mean(KerPrevRates, na.rm = TRUE) ~ "High-High",
+        LISA_p < 0.05 & KerPrevRates < mean(KerPrevRates, na.rm = TRUE) &
+          lag.listw(listw, KerPrevRates) < mean(KerPrevRates, na.rm = TRUE) ~ "Low-Low",
+        LISA_p < 0.05 & KerPrevRates > mean(KerPrevRates, na.rm = TRUE) &
+          lag.listw(listw, KerPrevRates) < mean(KerPrevRates, na.rm = TRUE) ~ "High-Low",
+        LISA_p < 0.05 & KerPrevRates < mean(KerPrevRates, na.rm = TRUE) &
+          lag.listw(listw, KerPrevRates) > mean(KerPrevRates, na.rm = TRUE) ~ "Low-High",
+        TRUE ~ "Non-Significant"
+      )
+    )
+
+  # Define colors for LISA quadrants
+  lisa_colors <- c(
+    "High-High" = "#d73027",  # Red
+    "Low-Low" = "#4575b4",    # Blue
+    "High-Low" = "#fdae61",   # Orange
+    "Low-High" = "#74add1",   # Light blue
+    "Non-Significant" = "#e0e0e0" # Light grey
+  )
+  
+  # Map showing LISA quadrants
+  ggplot(PovKermeans_contiguous) +
+    geom_sf(aes(fill = quadrant), color = NA) +
+    scale_fill_manual(values = lisa_colors) +
+    labs(
+      title = "Local Moran's I Clusters (LISA Quadrants)",
+      fill = "Cluster Type"
+    ) +
+    theme_minimal()
+```
+
+
+
+```{r State-level bivar plot}
+
+  # Define the 3x3 custom palette with swapped colors (purple for poverty, gold for keratitis)
+  purplegold <- c(
+    "1-1" = "#e8e8e8", # Low poverty, low keratitis
+    "2-1" = "#cbb8d7", # Moderate poverty, low keratitis
+    "3-1" = "#9972af", # High poverty, low keratitis
+    "1-2" = "#e4d9ac", # Low poverty, moderate keratitis
+    "2-2" = "#c8ada0", # Moderate poverty, moderate keratitis
+    "3-2" = "#976b82", # High poverty, moderate keratitis
+    "1-3" = "#c8b35a", # Low poverty, high keratitis
+    "2-3" = "#af8e53", # Moderate poverty, high keratitis
+    "3-3" = "#804d36"  # High poverty, high keratitis
+  )
+  
+  # Load required libraries
+  library(biscale)
+  library(ggplot2)
+  library(cowplot)
+  
+  # Create the bivariate map with thin, light borders
+  bivar_state_map <- ggplot() +
+    geom_sf(data = PovKerStatemeans_bi, aes(fill = bi_class), color = "#d3d3d3", size = 0.2) + # Add light borders
+    scale_fill_manual(values = purplegold) + # Apply the custom palette
+    labs(
+      title = "Keratitis Prevalence Rate Estimates and Poverty Levels by State"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none", # No legend in the map
+      plot.title = element_text(size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  
+  # Create a 3x3 cubed legend separately
+  bivar_state_legend <- bi_legend(
+    pal = purplegold,
+    dim = 3,
+    xlab = "Higher Poverty (Purple)",
+    ylab = "Higher Keratitis (Gold)",
+    size = 8
+  )
+  
+  # Combine the map and the separate cubed legend
+  final_state_plot <- ggdraw() +
+    draw_plot(bivar_state_map, 0, 0, 1, 1) +       # Add the map
+    draw_plot(bivar_state_legend, 0.1, 0.1, 0.3, 0.3) # Add the legend in the bottom left corner
+    
+  # Save the final plot
+  ggsave("bivariate_keratitis_poverty_state_map_with_borders.png", plot = final_state_plot, width = 8, height = 6, dpi = 300)
+
+```
+
+
+
+```{r Plots}
+
+  # Divide the data into "High Poverty" and "Low Poverty" based on the median poverty percentage
+    poverty_keratitis_stats <- PovKermeans_contiguous %>%
+      mutate(
+        poverty_level = ifelse(pov_pct >= median(pov_pct, na.rm = TRUE), "High Poverty", "Low Poverty")
+      ) %>%
+      group_by(poverty_level) %>%
+      summarise(
+        mean_keratitis = mean(KerPrevRates, na.rm = TRUE),
+        median_keratitis = median(KerPrevRates, na.rm = TRUE),
+        count = n()
+      )
+  
+  # Display the results
+    poverty_keratitis_stats
+  
+    # Update the dataset to use quintiles and remove NAs
+      PovKer <- PovKer %>%
+        mutate(poverty_category = cut(pov_pct,
+                                      breaks = quantile(pov_pct, probs = seq(0, 1, by = 0.2), na.rm = TRUE),
+                                      labels = c("1st quintile", "2nd quintile", "3rd quintile", "4th quintile", "5th quintile"),
+                                      include.lowest = TRUE)) %>%
+        filter(!is.na(poverty_category), !is.na(Data_Value))  # Remove NAs
+    
+    # Create the box plot for Poverty Quintiles with NAs removed
+      ggplot(PovKer, aes(x = poverty_category, y = Data_Value)) +
+        geom_boxplot() +
+        labs(title = "County Level Keratitis Prevalence Rates by Poverty Quintile",
+             x = "Poverty Quintile",
+             y = "County Level Keratitis Prevalence Rates") +
+        theme_minimal()
+ 
+     
+```
+
+
+
+```{r Filter out zeroes & log Data_Value}
+
+  # Remove rows where Data_Value is zero
+    PovKer_clean <- PovKer %>%
+      filter(Data_Value > 0)
+    
+  # Log-transform Data_Value
+    PovKer_clean <- PovKer_clean %>%
+      mutate(log_Data_Value = log(Data_Value))
+  
+    hist(PovKer_clean$log_Data_Value)
+    hist(PovKer_clean$pov_pct)
+    
+  
+
+```
+
+
+
+```{r Robust linear regression w/ poverty}
+
+  library(MASS)
+
+  # Robust linear model with estimate_poverty as the primary predictor and Data_Value as the outcome
+    robust_poverty_model <- rlm(
+      Data_Value ~ pov_pct,
+      data = PovKer_clean
+    )
+  
+  # View the summary of the robust model
+    summary(robust_poverty_model)
+    lmtest::lrtest(robust_poverty_model)
+    AIC(robust_poverty_model)
+    BIC(robust_poverty_model)
+  
+  # Robust linear model with estimate_poverty as the primary predictor and log-transformed Data_Value
+    robust_poverty_model_logoutcome <- rlm(
+      log_Data_Value ~ estimate_poverty + white_pct + black_pct + native_pct + asian_pct + pacific_pct + hispanic_pct,
+      data = PovKer_clean
+    )
+    summary(robust_poverty_model)
+  
+  # View the summary of the robust model
+    summary(robust_poverty_model)
+
+    
+  # Robust linear model with estimate_poverty quintiled as the primary predictor and pov_pct as the outcome
+    robust_poverty_model_catpred <- rlm(
+      Data_Value ~ poverty_category,
+      data = PovKer_clean
+    )    
+    
+    
+  # Generate predictions from the model for each quintile level, with confidence intervals
+    pred_data <- data.frame(poverty_category = levels(PovKer_clean$poverty_category))
+    pred_data$estimate <- predict(robust_poverty_model_catpred, newdata = pred_data, se.fit = TRUE)$fit
+    pred_data$std_error <- predict(robust_poverty_model_catpred, newdata = pred_data, se.fit = TRUE)$se.fit
+    pred_data <- pred_data %>%
+      mutate(
+        lower_ci = estimate - 1.96 * std_error,
+        upper_ci = estimate + 1.96 * std_error,
+        label = paste0(round(estimate, 2), " (", round(lower_ci, 2), " - ", round(upper_ci, 2), ")")  # Labels with CIs
+      )
+
+  # Plot the relationship with data labels for estimates and CIs
+    ggplot(pred_data, aes(x = poverty_category, y = estimate)) +
+      geom_point(size = 3, color = "#5b2a86") +
+      geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, color = "#5b2a86") +
+      geom_text(aes(label = label), vjust = -1.5, color = "black", fontface = "bold", size = 3.5) +  # Black and bold labels
+      labs(
+        title = "Estimated Keratitis Prevalence by Poverty Quintile",
+        x = "Poverty Quintile",
+        y = "Estimated Keratitis Prevalence Rate"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10)
+      )
+      
+  
+```
+
+
+
+```{r RLM w/ gini as the predictor}
+
+  # Update the dataset to use quintiles of estimate_gini and remove NAs
+    PovKer <- PovKer %>%
+      mutate(gini_category = cut(estimate_gini,
+                                 breaks = quantile(estimate_gini, probs = seq(0, 1, by = 0.2), na.rm = TRUE),
+                                 labels = c("1st quintile", "2nd quintile", "3rd quintile", "4th quintile", "5th quintile"),
+                                 include.lowest = TRUE)) %>%
+      filter(!is.na(gini_category), !is.na(Data_Value))  # Remove NAs
+  
+  # Create the box plot for Gini Index Quintiles with NAs removed
+    ggplot(PovKer, aes(x = gini_category, y = Data_Value)) +
+      geom_boxplot() +
+      labs(title = "County Level Keratitis Prevalence Rates by Gini Index Quintile",
+           x = "Gini Index Quintile",
+           y = "County Level Keratitis Prevalence Rates") +
+      theme_minimal()
+
+
+  # Robust linear model with estimate_poverty quintiled as the primary predictor and pov_pct as the outcome
+    robust_GINI_model_catpred <- rlm(
+      Data_Value ~ gini_category,
+      data = PovKer
+    )  
+
+    summary(robust_GINI_model_catpred)
+    
+  # Generate predictions from the model for each GINI quintile level, with confidence intervals
+  pred_data <- data.frame(gini_category = levels(PovKer$gini_category))
+  pred_data$estimate <- predict(robust_GINI_model_catpred, newdata = pred_data, se.fit = TRUE)$fit
+  pred_data$std_error <- predict(robust_GINI_model_catpred, newdata = pred_data, se.fit = TRUE)$se.fit
+  
+  # Add confidence intervals and labels
+  pred_data <- pred_data %>%
+    mutate(
+      lower_ci = estimate - 1.96 * std_error,
+      upper_ci = estimate + 1.96 * std_error,
+      label = paste0(round(estimate, 2), " (", round(lower_ci, 2), " - ", round(upper_ci, 2), ")")  # Labels with CIs
+    )
+  
+  # Plot the relationship with data labels for estimates and CIs
+  ggplot(pred_data, aes(x = gini_category, y = estimate)) +
+    geom_point(size = 3, color = "#5b2a86") +
+    geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, color = "#5b2a86") +
+    geom_text(aes(label = label), vjust = -1.5, color = "black", fontface = "bold", size = 3.5) +  # Black and bold labels
+    labs(
+      title = "Estimated Keratitis Prevalence by GINI Quintile",
+      x = "GINI Index Quintile",
+      y = "Estimated Keratitis Prevalence Rate"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10)
+    )
+```
+
+
+
+```{r RLM for income adjusting for inequality}
+
+
+  PovKer_clean$NonWhite <- (100 - PovKer_clean$white_pct)
+
+
+  # Update PovKer_clean to make poverty_binary a binary variable (1 for high poverty, 0 for low poverty)
+    PovKer_clean <- PovKer_clean %>%
+      mutate(poverty_binary = ifelse(pov_pct >= median(pov_pct, na.rm = TRUE), 1, 0))
+  
+  # Updated robust linear model with poverty_binary and offset for Sample_Size
+    robust_catpoverty_model_2adj_binary <- rlm(
+      Data_Value ~ poverty_binary + NonWhite + offset(log(Sample_Size)),
+      data = PovKer_clean
+    )
+  
+  # Summary and VIF to check multicollinearity
+    summary(robust_catpoverty_model_2adj_binary)
+    car::vif(robust_catpoverty_model_2adj_binary)
+  
+  # Calculate the median values for estimate_gini and NonWhite to adjust for their effects
+    gini_median <- median(PovKer_clean$estimate_gini, na.rm = TRUE)
+    nonwhite_median <- median(PovKer_clean$NonWhite, na.rm = TRUE)
+    sample_size_typical <- median(PovKer_clean$Sample_Size, na.rm = TRUE)
+  
+  # Generate predictions from the adjusted model for each poverty level, with confidence intervals
+    pred_data <- data.frame(
+      poverty_binary = c(0, 1),  # Low poverty (0) and high poverty (1)
+      estimate_gini = gini_median,
+      NonWhite = nonwhite_median,
+      Sample_Size = sample_size_typical  # Fixed Sample_Size for the offset term
+    )
+    
+    pred_data$estimate <- predict(robust_catpoverty_model_2adj_binary, newdata = pred_data, se.fit = TRUE)$fit
+    pred_data$std_error <- predict(robust_catpoverty_model_2adj_binary, newdata = pred_data, se.fit = TRUE)$se.fit
+  
+  # Add confidence intervals and labels
+    pred_data <- pred_data %>%
+      mutate(
+        poverty_label = ifelse(poverty_binary == 1, "Above Average Poverty", " Below Average Poverty"),
+        lower_ci = estimate - 1.96 * std_error,
+        upper_ci = estimate + 1.96 * std_error,
+        label = paste0(round(estimate, 2), " (", round(lower_ci, 2), " - ", round(upper_ci, 2), ")")  # Labels with CIs
+      )
+  
+  # Plot the relationship with data labels for estimates and CIs
+    ggplot(pred_data, aes(x = poverty_label, y = estimate)) +
+      geom_point(size = 3, color = "black") +
+      geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, color = "black") +
+      geom_text(aes(label = label), vjust = -1.5, color = "black", fontface = "bold", size = 3.5) +  # Black and bold labels
+      labs(
+        title = "Estimated Keratitis Prevalence by Poverty Level",
+        x = "Poverty Level",
+        y = "Estimated Keratitis Prevalence Rate"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10)
+      )
+
+```
+
+
+
+```{r Adjusted Alternative Models}
+
+  # Updated robust linear model with poverty_binary and offset for Sample_Size
+    rlm_pov_bigger <- rlm(
+      Data_Value ~ pov_pct + NonWhite + labor_force_pct + unemployment_rate + uninsured_pct + offset(log(Sample_Size)),
+      data = PovKer_clean
+    )
+  
+  # Summary and VIF to check multicollinearity
+    summary(rlm_pov_bigger)
+    car::vif(rlm_pov_bigger)
+
+```
+
+
+
+```{r Plotting old model?}
+# Calculate the median values for other covariates to adjust for their effects
+gini_median <- median(PovKer_clean$estimate_gini, na.rm = TRUE)
+nonwhite_median <- median(PovKer_clean$NonWhite, na.rm = TRUE)
+labor_force_median <- median(PovKer_clean$labor_force_pct, na.rm = TRUE)
+unemployment_median <- median(PovKer_clean$unemployment_rate, na.rm = TRUE)
+uninsured_median <- median(PovKer_clean$uninsured_pct, na.rm = TRUE)
+sample_size_typical <- median(PovKer_clean$Sample_Size, na.rm = TRUE)
+
+# Generate a sequence of poverty percentage values for predictions
+poverty_range <- seq(min(PovKer_clean$pov_pct, na.rm = TRUE), 
+                     max(PovKer_clean$pov_pct, na.rm = TRUE), 
+                     length.out = 100)
+
+# Create a dataset for predictions
+pred_data <- data.frame(
+  pov_pct = poverty_range,                 # Range of poverty percentages
+  estimate_gini = gini_median,             # Fixed Gini coefficient
+  NonWhite = nonwhite_median,              # Fixed NonWhite percentage
+  labor_force_pct = labor_force_median,    # Fixed labor force percentage
+  unemployment_rate = unemployment_median, # Fixed unemployment rate
+  uninsured_pct = uninsured_median,        # Fixed uninsured percentage
+  Sample_Size = sample_size_typical        # Fixed Sample_Size for offset
+)
+
+# Generate predictions with confidence intervals
+pred_data$estimate <- predict(rlm_pov_bigger, newdata = pred_data, se.fit = TRUE)$fit
+pred_data$std_error <- predict(rlm_pov_bigger, newdata = pred_data, se.fit = TRUE)$se.fit
+
+# Add confidence intervals
+pred_data <- pred_data %>%
+  mutate(
+    lower_ci = estimate - 1.96 * std_error,
+    upper_ci = estimate + 1.96 * std_error
+  )
+
+# Plot the relationship
+ggplot(pred_data, aes(x = pov_pct, y = estimate)) +
+  geom_line(color = "blue", size = 1) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "blue", alpha = 0.2) +
+  labs(
+    title = "Estimated Keratitis Prevalence by Poverty Percentage",
+    x = "Poverty Percentage",
+    y = "Estimated Keratitis Prevalence Rate"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+
+
+```
+
+
+
+```{r Florida}
+
+  # Filter PovKer for each year and restrict to Florida
+  PovKer_Florida_2014 <- PovKer %>%
+    filter(year == 2014 & grepl(", Florida", NAME))
+  
+  PovKer_Florida_2015 <- PovKer %>%
+    filter(year == 2015 & grepl(", Florida", NAME))
+  
+  PovKer_Florida_2016 <- PovKer %>%
+    filter(year == 2016 & grepl(", Florida", NAME))
+  
+  PovKer_Florida_2017 <- PovKer %>%
+    filter(year == 2017 & grepl(", Florida", NAME))
+  
+  PovKer_Florida_2018 <- PovKer %>%
+    filter(year == 2018 & grepl(", Florida", NAME))
+  
+  PovKer_Florida_2019 <- PovKer %>%
+    filter(year == 2019 & grepl(", Florida", NAME))
+  
+  PovKer_Florida <- PovKer %>%
+    filter(grepl(", Florida", NAME))
+  
+  # List to loop through Florida datasets and generate plots
+  PovKer_Florida_years <- list(
+    PovKer_Florida_2014,
+    PovKer_Florida_2015,
+    PovKer_Florida_2016,
+    PovKer_Florida_2017,
+    PovKer_Florida_2018,
+    PovKer_Florida_2019
+  )
+  years <- 2014:2019
+  
+  
+  # Loop to generate and print heatmaps for each year for Florida
+  for (i in seq_along(PovKer_Florida_years)) {
+    p <- ggplot(PovKer_Florida_years[[i]]) +
+      geom_sf(aes(fill = Data_Value), color = NA) +  # Fill with Data_Value, no border color
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +  # Plasma color scale; NA as grey
+      labs(
+        title = paste("Florida County Level Keratitis Prevalence Rates (", years[i], ")", sep = ""),
+        fill = "Keratitis Prevalence Rate"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom",  # Position legend below each plot
+        plot.title = element_text(size = 12, hjust = 0.5)  # Center and resize titles
+      )
+    
+    print(p)  # Display each plot in the loop
+  }
+  
+# Determine the overall range of Data_Value across all Florida datasets
+data_value_range <- range(
+  unlist(lapply(PovKer_Florida_years, function(df) df$Data_Value)),
+  na.rm = TRUE
+)
+
+# Create a list to store plots
+florida_plots <- list()
+
+# Loop to generate plots for each year with consistent scale
+for (i in seq_along(PovKer_Florida_years)) {
+  florida_plots[[i]] <- ggplot(PovKer_Florida_years[[i]]) +
+    geom_sf(aes(fill = Data_Value), color = NA) +  # No borders
+    scale_fill_viridis_c(
+      option = "plasma", 
+      na.value = "grey", 
+      limits = data_value_range  # Set consistent upper and lower bounds
+    ) +
+    labs(
+      title = paste("Florida County Level Keratitis Prevalence Rates (", years[i], ")", sep = ""),
+      fill = "Keratitis Prevalence Rate"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",  # Position legend below each plot
+      plot.title = element_text(size = 12, hjust = 0.5)  # Center and resize titles
+    )
+}
+
+# Arrange the six plots into a grid (2 rows, 3 columns)
+six_panel_plot <- grid.arrange(
+  grobs = florida_plots,
+  nrow = 2,
+  ncol = 3,
+  top = "Florida County Level Keratitis Prevalence Rates (2014-2019)"  # Main title
+)
+
+# Cap Data_Value at 6.5 for all Florida datasets
+PovKer_Florida_years_capped <- lapply(PovKer_Florida_years, function(df) {
+  df %>%
+    mutate(Data_Value = ifelse(Data_Value > 7, 7, Data_Value)) # Cap at 6.5
+})
+
+# Determine the overall range of capped Data_Value across all Florida datasets
+data_value_range <- range(
+  unlist(lapply(PovKer_Florida_years_capped, function(df) df$Data_Value)),
+  na.rm = TRUE
+)
+
+# Create a list to store capped plots
+florida_plots_capped <- list()
+
+# Loop to generate capped plots for each year with consistent scale
+for (i in seq_along(PovKer_Florida_years_capped)) {
+  florida_plots_capped[[i]] <- ggplot(PovKer_Florida_years_capped[[i]]) +
+    geom_sf(aes(fill = Data_Value), color = NA) +  # No borders
+    scale_fill_viridis_c(
+      option = "plasma", 
+      na.value = "grey", 
+      limits = data_value_range  # Set consistent upper and lower bounds
+    ) +
+    labs(
+      title = paste("Florida County Level Keratitis Prevalence Estimates (", years[i], ")", sep = ""),
+      fill = "Keratitis Prevalence Estimate"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",  # Position legend below each plot
+      plot.title = element_text(size = 12, hjust = 0.5)  # Center and resize titles
+    )
+}
+
+# Arrange the six capped plots into a grid (2 rows, 3 columns)
+six_panel_plot_capped <- grid.arrange(
+  grobs = florida_plots_capped,
+  nrow = 2,
+  ncol = 3,
+  top = "Florida County Level Keratitis Prevalence Estimates (2014-2019)"  # Main title
+)
+```
+
+
+
+```{r Florida mean keratitis map}
+
+  # Modify scale_fill_gradientn() to reverse legend direction
+  mean_map <- ggplot(data = PovKer_Florida_mean) +
+    geom_sf(aes(fill = Mean_Keratitis), color = "black", size = 0.1) +  # Thin county borders
+    scale_fill_gradientn(
+      colors = color_values,
+      name = "Mean Prevalence"
+    ) +
+    labs(
+      title = "Mean County-Level Keratitis Prevalence in Florida (2014-2019)",
+      subtitle = "Average prevalence across all six years",
+      caption = "Source: Florida VEHHS Data"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
+      legend.position = "right"
+    )
+  
+  # Save the updated map as an SVG
+  output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Keratitis_Mean.svg"
+  
+  ggsave(output_path, plot = mean_map, width = 8, height = 6, dpi = 300)
+
+    
+
+```
+
+
+
+```{r Florida Keratitis standalone Maps}
+
+  # Define bins for Keratitis Prevalence
+    bin_breaks <- c(0, 1, 2, 3, 4, 5, 6, Inf)  # 7 bins (last bin is 6+)
+    bin_labels <- c("0-1", "1-2", "2-3", "3-4", "4-5", "5-6", ">6")
+  
+  # Define a fixed color scheme for consistency
+    color_values <- c("#E8E8E8", "#D0D1E6", "#A6BDDB", "#74A9CF", "#2B8CBE", "#045A8D", "#023858")
+  
+  # Define the output directory for saving PNGs
+    output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Frames/"
+  
+  # Create output directory if it doesn't exist
+    if (!dir.exists(output_dir)) {
+      dir.create(output_dir, recursive = TRUE)
+    }
+  
+  # Extract Florida's bounding box
+    florida_bbox <- st_bbox(PovKer_Florida_years_capped[[1]])  # Get bounding box from first year's data
+    florida_center <- c(mean(florida_bbox[c("xmin", "xmax")]), mean(florida_bbox[c("ymin", "ymax")]))  # Calculate map center
+  
+  # Loop through each year and create an individual map
+    for (i in seq_along(PovKer_Florida_years_capped)) {
+    # Extract dataset for the current year
+      data_for_year <- PovKer_Florida_years_capped[[i]]
+      year_label <- 2014 + (i - 1)  # Assuming first year is 2014
+    
+    # Ensure all bins are present by converting `cut()` output into a factor with fixed levels
+      data_for_year$Binned_Value <- factor(
+        cut(data_for_year$Data_Value, breaks = bin_breaks, labels = bin_labels, include.lowest = TRUE),
+        levels = bin_labels  # Ensure all bins appear in the legend
+      )
+  
+    # Create a **true dummy dataset** with actual mapped geometry in Florida  
+      dummy_data <- data_for_year %>% slice(1)  # Copy first row to keep structure
+      dummy_data <- dummy_data[rep(1, length(bin_labels)), ]  # Duplicate row for each bin
+      dummy_data$Data_Value <- bin_breaks[-length(bin_breaks)] + 0.01  # Assign values close to breakpoints
+      dummy_data$Binned_Value <- factor(bin_labels, levels = bin_labels)  # Assign labels to match bins
+    
+    # Bind dummy data to force all legend bins to appear
+      data_for_plot <- bind_rows(data_for_year, dummy_data)
+  
+    # Create the map
+      map <- ggplot(data = data_for_plot) +
+        geom_sf(aes(fill = Binned_Value), color = "black", size = 0.1, data = data_for_year) +  # Main data
+        geom_sf(aes(fill = Binned_Value), data = dummy_data, alpha = 0, show.legend = TRUE) +  # Invisible layer for legend
+        scale_fill_manual(
+          values = color_values,
+          name = "Keratitis Prevalence",
+          drop = FALSE
+        ) +
+        coord_sf(xlim = c(florida_bbox$xmin, florida_bbox$xmax),  # Keep Florida's original extent
+                 ylim = c(florida_bbox$ymin, florida_bbox$ymax)) +
+        labs(
+          title = paste("Florida County-Level Keratitis Prevalence Estimates (", year_label, ")", sep = ""),
+          subtitle = "",
+          caption = "Source: Florida VEHHS Data"
+        ) +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 16),
+          plot.subtitle = element_text(hjust = 0.5, size = 12),
+          legend.position = "right"
+        )
+      
+    # Save the map as a PNG for this year
+      output_path <- paste0(output_dir, "Keratitis_Frame_", year_label, ".png")
+      ggsave(output_path, plot = map, width = 8, height = 6, dpi = 300)
+    
+    # Print confirmation
+      print(paste("Saved:", output_path))
+  }
+```
+
+
+
+```{r Attempt to gif the Florida keratitis maps}
+
+  # Read saved PNGs
+    frames <- list.files(output_dir, pattern = "*.png", full.names = TRUE)
+  
+  # Ensure the order of the frames matches the chronological order of years
+    frames_ordered <- frames[order(match(gsub(".*_(\\d{4})\\.png", "\\1", frames), as.character(2014:2019)))]
+  
+  # Read all PNG images in the correct order
+    image_list <- image_read(frames_ordered)
+  
+  # Combine images into a GIF and save
+    gif <- image_animate(image_list, fps = 1)  # 1 frame per second
+    gif_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Keratitis_Maps_Animation.gif"
+    
+    image_write(gif, gif_path)
+  
+  # Print confirmation
+    print(paste("GIF successfully saved at:", gif_path))
+
+```
+
+
+
+```{r Florida Keratitis Year Change Plot}
+
+
+  # Filter dataset for Florida and years 2014-2019
+    florida_data <- PovKer_State %>%
+      filter(NAME == "Florida", year >= 2014, year <= 2019)
+  
+  # Create the plot
+    KeratitisChange_Plot <- ggplot(florida_data, aes(x = year, y = Data_Value)) +
+      geom_line(color = "#2D8BBA", size = 1.2) +  # Line for Data_Value
+      geom_ribbon(aes(ymin = Low_Confidence_limit, ymax = High_Confidence_Limit), 
+                  fill = "#7FC0E1", alpha = 0.4) +  # Confidence interval shading
+      geom_point(color = "#2D8BBA", size = 3) +  # Points for emphasis
+      labs(
+        title = "Keratitis Prevalence Estimates in Florida (2014-2019)",
+        subtitle = "With 95% Confidence Intervals",
+        x = "Year",
+        y = "Prevalence Estimate",
+        caption = "Source: VEHHS Data Estimates"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12)
+      )
+
+    output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Keratitis_Change_2014_2019.png"
+  
+    ggsave(output_path, plot = KeratitisChange_Plot, width = 8, height = 6, dpi = 300) 
+
+```
+
+
+
+```{r Florida 2019-2014 Map}
+
+  # Extract 2014 and 2019 data from the list
+    data_2014 <- PovKer_Florida_years_capped[[1]]  # Assuming index 1 is 2014
+    data_2019 <- PovKer_Florida_years_capped[[6]]  # Assuming index 6 is 2019
+  
+  # Convert sf objects to regular data frames for joining
+    data_2014_df <- data_2014 %>% as.data.frame() %>% dplyr::select(GEOID, Data_Value_2014 = Data_Value)
+    data_2019_df <- data_2019 %>% as.data.frame() %>% dplyr::select(GEOID, Data_Value_2019 = Data_Value)
+  
+  # Join the datasets on GEOID
+    data_diff <- data_2019_df %>%
+      left_join(data_2014_df, by = "GEOID") %>%
+      mutate(Change = Data_Value_2019 - Data_Value_2014)
+    
+  # Convert back to sf using the original 2019 geometry
+    data_diff <- left_join(data_2019 %>% dplyr::select(GEOID, geometry), data_diff, by = "GEOID") %>%
+      st_as_sf()
+  
+  # Define a diverging color palette (Red → Grey → Blue)
+    color_palette <- c("#D73027", "#ECECEC", "#4575B4")
+  
+  # Create the map
+    map <- ggplot(data = data_diff) +
+      geom_sf(aes(fill = Change), color = "black", size = 0.1) +  # Thin county borders
+      scale_fill_gradient2(
+        low = "#D73027",    # Strong negative changes (Red)
+        mid = "#ECECEC",    # Minimal changes (Grey)
+        high = "#4575B4",   # Strong positive changes (Blue)
+        midpoint = 0,       # Center the color scale at 0
+        name = "Change in Prevalence"
+      ) +
+      labs(
+        title = "Change in Florida County-Level Keratitis Prevalence (2014-2019)",
+        subtitle = "Difference between 2019 and 2014 estimates",
+        caption = "Source: Florida Keratitis Data"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        legend.position = "right"
+      )
+  
+  # Print the map
+    print(map)
+
+    output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Keratitis_Change_2014_2019.svg"
+    
+    ggsave(output_path, plot = map, width = 8, height = 6, dpi = 300)
+  
+    
+```
+
+
+
+```{r Florida SVI}
+
+  # Use rep() to repeat the state name for each year
+    Keratitis_SVI_Full <- find_svi(
+      year = c(2014:2019),
+      state = rep("FL", length(c(2014:2019))), # Repeat "FL" for each year
+      geography = "county"
+    )
+  
+  # Check the resulting dataset
+    head(Keratitis_SVI_Full)
+
+  # Create a merged dataset with all counties in county_data_wide and fill missing values with NA for unmatched rows
+    Keratitis_SVI_Florida <- Keratitis_SVI_Full %>%
+      left_join(PovKer_Florida, by = c("GEOID" = "GEOID", "year" = "year"))
+
+  # Split the dataset into a list of datasets by year
+    Keratitis_SVI_by_year <- split(Keratitis_SVI_Florida, Keratitis_SVI_Florida$year)
+    for (year in names(Keratitis_SVI_by_year)) {
+      assign(paste0("Keratitis_SVI_", year), Keratitis_SVI_by_year[[year]])
+    }
+    
+    Keratitis_SVI_by_year <- lapply(Keratitis_SVI_by_year, function(df) {
+      st_as_sf(df, sf_column_name = "geometry")
+    })
+    
+    Keratitis_SVI_Florida <- st_as_sf(Keratitis_SVI_Florida, sf_column_name = "geometry")
+```
+
+
+
+```{r State-level SVI}
+
+  # Define years
+    years <- 2014:2019
+  
+  # Initialize an empty list to store SVI data for each year
+    SVI_State_List <- list()
+  
+  # Loop through each year to retrieve state-level SVI (state = NULL for national processing)
+    for (yr in years) {
+      svi_data <- find_svi(
+        year = yr,
+        state = NULL,  # Required for state-level estimates
+        geography = "state"
+      )
+      
+      # Store in list with year as identifier
+        svi_data$year <- yr
+        SVI_State_List[[as.character(yr)]] <- svi_data
+    }
+  
+  # Combine all years into a single dataset (for **all states**)
+    Keratitis_SVI_US_State <- bind_rows(SVI_State_List)
+  
+  # Join with state-level keratitis data (PovKer_State)
+    Keratitis_SVI_US_State <- Keratitis_SVI_US_State %>%
+      left_join(PovKer_State, by = c("GEOID" = "GEOID", "year" = "year"))
+  
+  # Convert to sf object for spatial analysis
+    Keratitis_SVI_US_State <- st_as_sf(Keratitis_SVI_US_State, sf_column_name = "geometry")
+  
+  # Print confirmation
+    print("US state-level SVI estimates successfully retrieved and merged!")
+  
+  # Filter FL out separately:
+    Keratitis_SVI_Florida_State <- Keratitis_SVI_US_State %>%
+      filter(NAME == "Florida")
+    
+    print("Florida-specific dataset is now stored as `Keratitis_SVI_Florida_State`")
+
+
+
+```
+
+
+
+```{r Plotting Florida SVI}
+
+  # Filter dataset for Florida
+  svi_florida <- Keratitis_SVI_Florida_State %>%
+    filter(year >= 2014, year <= 2019)
+  
+  # Define SVI themes and corresponding shades of blue
+  svi_themes <- c("RPL_theme1", "RPL_theme2", "RPL_theme3", "RPL_theme4", "RPL_themes")
+  blue_shades <- c("#1F77B4", "#4682B4", "#5A9BD4", "#7EA6E0", "#9EC1E5")  # Different blue shades
+  
+  # Loop through SVI themes and create plots
+  plots <- list()
+  for (i in seq_along(svi_themes)) {
+    theme_name <- svi_themes[i]
+    color <- blue_shades[i]
+    
+    p <- ggplot(svi_florida, aes(x = year, y = .data[[theme_name]])) +
+      geom_line(color = color, size = 1.2) +  # Line for SVI score
+      geom_point(color = color, size = 3) +  # Points for emphasis
+      labs(
+        title = paste0("Social Vulnerability Index - ", theme_name, " (2014-2019)"),
+        subtitle = "Florida State-Level SVI Scores",
+        x = "Year",
+        y = "SVI Score",
+        caption = "Source: CDC/ATSDR SVI Data"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12)
+      )
+    
+    # Store plot in list
+    plots[[theme_name]] <- p
+  }
+  
+  # Print all plots
+  for (p in plots) {
+    print(p)
+  }
+
+```
+
+
+
+```{r Mapping SoVI}
+
+  # Loop through each year and create a map
+    for (year in names(Keratitis_SVI_by_year)) {
+      # Extract the dataset for the current year
+      data_for_year <- Keratitis_SVI_by_year[[year]]
+      
+    # Create the map
+    map <- ggplot(data = data_for_year) +
+      geom_sf(aes(fill = RPL_themes), color = "black", size = 0.1) +
+      scale_fill_viridis_c(option = "plasma", name = "SVI Index") +
+      labs(
+        title = paste("Social Vulnerability by County in Florida -", year),
+        subtitle = "Social Vulnerability Index",
+        caption = "Source: CDC SVI Data"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        legend.position = "right"
+      )
+    
+    # Print the map in the R environment
+    print(map)
+  }
+
+
+```
+
+
+
+```{r Basic Models for keratitis & SVI in Florida}
+
+  # Keratitis & Social Vulnerability theme 1
+    rlm_Fl_SVI_t1 <- rlm(
+      Data_Value ~ RPL_theme1 + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+    summary(rlm_Fl_SVI_t1)
+
+
+  # Keratitis & Social Vulnerability theme 2
+    rlm_Fl_SVI_t2 <- rlm(
+      Data_Value ~ RPL_theme2 + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+    summary(rlm_Fl_SVI_t2)
+    
+  # Keratitis & Social Vulnerability theme 3
+    rlm_Fl_SVI_t3 <- rlm(
+      Data_Value ~ RPL_theme3 + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+    summary(rlm_Fl_SVI_t3)
+    
+  # Keratitis & Social Vulnerability theme 4
+    rlm_Fl_SVI_t4 <- rlm(
+      Data_Value ~ RPL_theme4 + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+    summary(rlm_Fl_SVI_t4)
+
+  # Keratitis & Social Vulnerability - Full Index
+    rlm_Fl_SVI_total <- rlm(
+      Data_Value ~ RPL_themes + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+    summary(rlm_Fl_SVI_total)    
+        
+```
+
+
+
+```{r Plotting residuals of rlm}
+
+  library(rgeoda)
+  library(spdep)
+
+  # Step 1: Extract Residuals from the RLM Model
+    Keratitis_SVI_Florida$residuals <- residuals(rlm_Fl_SVI_total)
+  
+  # Step 2: Plot Residuals Spatially
+    ggplot(Keratitis_SVI_Florida) +
+      geom_sf(aes(fill = residuals), color = "black", size = 0.2) +  # Thin black borders
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +  # Plasma color scale
+      labs(
+        title = "Spatial Distribution of Residuals (Robust Linear Model)",
+        fill = "Residuals"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom",
+        plot.title = element_text(size = 14, hjust = 0.5)  # Centered title
+      )
+
+
+  # Step 1: Create a Proper Neighbors List (Queen Contiguity)
+    nb <- poly2nb(Keratitis_SVI_Florida)  # Generate neighbors list
+  
+  # Step 2: Convert to a Spatial Weights Object
+    wij <- nb2listw(nb, style = "W")  # Row-standardized weights
+  
+  # Step 3: Run Moran’s I Test on Residuals
+    moran_test <- moran.test(Keratitis_SVI_Florida$residuals, wij)
+  
+  # Print the results
+    print(moran_test)
+
+```
+
+
+
+```{r Spatially lagged regression}
+
+
+  # Step 1: Convert sf Object to a Data Frame (Dropping Geometry)
+    keratitis_df <- Keratitis_SVI_Florida %>%
+      st_drop_geometry() %>%
+      dplyr::select(GEOID, Data_Value, RPL_themes)
+  
+  # Step 2: Compute the Spatial Lag Variable
+    spatial_lag_df <- spatial_lag(wij, keratitis_df["Data_Value"])  # Returns a data frame
+  
+  # Step 3: Ensure Spatial Lag Variable is Numeric (Fix the List Issue)
+    keratitis_df$W_Data_Value <- as.numeric(unlist(spatial_lag_df))  # Convert from list to numeric
+  
+  # Step 4: Add Back to the Original Spatial Data
+    Keratitis_SVI_Florida$W_Data_Value <- keratitis_df$W_Data_Value
+  
+  # Step 5: Run the Robust Linear Model (Fixed)
+    rlm_Fl_SVI_spatial <- rlm(
+      Data_Value ~ RPL_themes + W_Data_Value + offset(log(Sample_Size)),
+      data = Keratitis_SVI_Florida
+    )
+  
+  # Step 6: Summarize the Model
+    summary(rlm_Fl_SVI_spatial)
+
+  # Step 1: Extract Residuals from the Spatially Lagged Model
+    Keratitis_SVI_Florida$residuals_spatial <- residuals(rlm_Fl_SVI_spatial)
+
+  # Step 2: Plot Residuals Spatially
+    ggplot(Keratitis_SVI_Florida) +
+      geom_sf(aes(fill = residuals_spatial), color = "black", size = 0.2) +  # Thin black borders
+      scale_fill_viridis_c(option = "plasma", na.value = "grey") +  # Plasma color scale
+      labs(
+        title = "Spatial Distribution of Residuals (Spatially Lagged Model)",
+        fill = "Residuals"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom",
+        plot.title = element_text(size = 14, hjust = 0.5)  # Centered title
+      )
+
+  # Step 3: Generate a Spatial Weights Matrix (if not already created)
+    nb <- poly2nb(Keratitis_SVI_Florida)  # Generate neighbors list
+    wij <- nb2listw(nb, style = "W")  # Convert to weights list
+
+  # Step 4: Run Moran’s I Test on Residuals (Spatial Model)
+    moran_test_spatial <- moran.test(Keratitis_SVI_Florida$residuals_spatial, wij)
+
+  # Print the results
+    print(moran_test_spatial)  
+  
+```
+
+
+
+```{r Spatial error term in model}
+
+
+  # Step 1: Create Spatial Weights Using rgeoda (Fixing the Issue)
+    wij <- queen_weights(Keratitis_SVI_Florida)  # Generates a SpatialWeights object for rgeoda
+  
+  # Step 2: Extract Residuals from the Original Robust Model
+    Keratitis_SVI_Florida$residuals_rlm <- residuals(rlm_Fl_SVI_total)
+  
+  # Step 3: Convert sf Object to a Data Frame
+  keratitis_df <- Keratitis_SVI_Florida %>%
+    st_drop_geometry() %>%
+    dplyr::select(GEOID, residuals_rlm) %>%
+    as.data.frame()
+  
+  # Step 4: Ensure Residuals Are Numeric
+  keratitis_df$residuals_rlm <- as.numeric(keratitis_df$residuals_rlm)
+  
+  # Step 5: Compute the Spatial Lag of Residuals (Fixed)
+  lagged_residuals_df <- spatial_lag(wij, keratitis_df["residuals_rlm"])
+  
+  # Step 6: Convert the Output to Numeric
+  keratitis_df$W_Residuals <- as.numeric(unlist(lagged_residuals_df))
+  
+  # Step 7: Add Back to the Original Spatial Data
+  Keratitis_SVI_Florida$W_Residuals <- keratitis_df$W_Residuals
+  
+  # Step 8: Fit a New RLM Including Spatially Lagged Residuals
+  rlm_Fl_SVI_filtered <- rlm(
+    Data_Value ~ RPL_themes + W_Residuals + offset(log(Sample_Size)),
+    data = Keratitis_SVI_Florida
+  )
+  
+  # Step 9: Extract New Residuals
+  Keratitis_SVI_Florida$residuals_filtered <- residuals(rlm_Fl_SVI_filtered)
+  
+  # Step 10: Run Moran’s I on the New Residuals
+  nb <- poly2nb(Keratitis_SVI_Florida)  # Generate neighbors list for Moran's I
+  wij_spdep <- nb2listw(nb, style = "W")  # Convert to weights list (for spdep compatibility)
+  
+  moran_test_filtered <- moran.test(Keratitis_SVI_Florida$residuals_filtered, wij_spdep)
+  
+  # Print Moran’s I results
+  print(moran_test_filtered)
+  
+  # Step 11: Plot Residuals from the New Model
+  ggplot(Keratitis_SVI_Florida) +
+    geom_sf(aes(fill = residuals_filtered), color = "black", size = 0.2) +  # Thin black borders
+    scale_fill_viridis_c(option = "plasma", na.value = "grey") +  # Plasma color scale
+    labs(
+      title = "Spatial Distribution of Residuals (Filtered RLM)",
+      fill = "Residuals"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(size = 14, hjust = 0.5)  # Centered title
+    )
+
+  summary(rlm_Fl_SVI_filtered)
+    t_value <- 3.4085
+    df <- 399
+    p_value <- 2 * pt(abs(t_value), df, lower.tail = FALSE)
+    print(formatC(p_value, format = "f", digits = 16))
+```
+
+
+
+```{r Spatial error for subthemes models}
+
+  # Create Spatial Weights Using rgeoda (Queen Contiguity)
+    wij <- queen_weights(Keratitis_SVI_Florida)  
+  
+  # Extract Residuals from the Original RLM Models for Each Theme
+    extract_residuals <- function(model) {
+      return(residuals(model))
+    }
+  
+  # Compute residuals for each model
+    Keratitis_SVI_Florida$residuals_rlm_t1 <- extract_residuals(rlm(Data_Value ~ RPL_theme1 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida))
+    Keratitis_SVI_Florida$residuals_rlm_t2 <- extract_residuals(rlm(Data_Value ~ RPL_theme2 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida))
+    Keratitis_SVI_Florida$residuals_rlm_t3 <- extract_residuals(rlm(Data_Value ~ RPL_theme3 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida))
+    Keratitis_SVI_Florida$residuals_rlm_t4 <- extract_residuals(rlm(Data_Value ~ RPL_theme4 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida))
+  
+  # Function to Compute Spatial Lag of Residuals
+    compute_spatial_lag <- function(residual_column) {
+      keratitis_df <- Keratitis_SVI_Florida %>%
+        st_drop_geometry() %>%
+        dplyr::select(GEOID, residual_column) %>%
+        as.data.frame()
+      
+      keratitis_df[[residual_column]] <- as.numeric(keratitis_df[[residual_column]])
+      
+      lagged_residuals_df <- spatial_lag(wij, keratitis_df[residual_column])
+      
+      return(as.numeric(unlist(lagged_residuals_df)))
+    }
+  
+  # Compute spatial lag for each theme's residuals
+    Keratitis_SVI_Florida$W_Residuals_t1 <- compute_spatial_lag("residuals_rlm_t1")
+    Keratitis_SVI_Florida$W_Residuals_t2 <- compute_spatial_lag("residuals_rlm_t2")
+    Keratitis_SVI_Florida$W_Residuals_t3 <- compute_spatial_lag("residuals_rlm_t3")
+    Keratitis_SVI_Florida$W_Residuals_t4 <- compute_spatial_lag("residuals_rlm_t4")
+  
+  # Fit New RLM Models Including Spatially Lagged Residuals
+    rlm_Fl_SVI_t1_filtered <- rlm(Data_Value ~ RPL_theme1 + W_Residuals_t1 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida)
+    rlm_Fl_SVI_t2_filtered <- rlm(Data_Value ~ RPL_theme2 + W_Residuals_t2 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida)
+    rlm_Fl_SVI_t3_filtered <- rlm(Data_Value ~ RPL_theme3 + W_Residuals_t3 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida)
+    rlm_Fl_SVI_t4_filtered <- rlm(Data_Value ~ RPL_theme4 + W_Residuals_t4 + offset(log(Sample_Size)), data = Keratitis_SVI_Florida)
+  
+  # Extract New Residuals
+    Keratitis_SVI_Florida$residuals_filtered_t1 <- residuals(rlm_Fl_SVI_t1_filtered)
+    Keratitis_SVI_Florida$residuals_filtered_t2 <- residuals(rlm_Fl_SVI_t2_filtered)
+    Keratitis_SVI_Florida$residuals_filtered_t3 <- residuals(rlm_Fl_SVI_t3_filtered)
+    Keratitis_SVI_Florida$residuals_filtered_t4 <- residuals(rlm_Fl_SVI_t4_filtered)
+  
+  # Run Moran’s I on the New Residuals for Each Theme
+    nb <- poly2nb(Keratitis_SVI_Florida)  
+    wij_spdep <- nb2listw(nb, style = "W")  
+    
+    moran_test_t1 <- moran.test(Keratitis_SVI_Florida$residuals_filtered_t1, wij_spdep)
+    moran_test_t2 <- moran.test(Keratitis_SVI_Florida$residuals_filtered_t2, wij_spdep)
+    moran_test_t3 <- moran.test(Keratitis_SVI_Florida$residuals_filtered_t3, wij_spdep)
+    moran_test_t4 <- moran.test(Keratitis_SVI_Florida$residuals_filtered_t4, wij_spdep)
+  
+  # Print Moran’s I results
+    print("Moran’s I Results for RPL_theme1:")
+    print(moran_test_t1)
+    
+    print("Moran’s I Results for RPL_theme2:")
+    print(moran_test_t2)
+    
+    print("Moran’s I Results for RPL_theme3:")
+    print(moran_test_t3)
+    
+    print("Moran’s I Results for RPL_theme4:")
+    print(moran_test_t4)
+  
+  # Plot Residuals from the New Models for Each Theme
+    plot_residuals <- function(residual_column, theme_label) {
+      ggplot(Keratitis_SVI_Florida) +
+        geom_sf(aes_string(fill = residual_column), color = "black", size = 0.2) +
+        scale_fill_viridis_c(option = "plasma", na.value = "grey") +
+        labs(
+          title = paste("Spatial Distribution of Residuals (Filtered RLM) -", theme_label),
+          fill = "Residuals"
+        ) +
+        theme_minimal() +
+        theme(
+          legend.position = "bottom",
+          plot.title = element_text(size = 14, hjust = 0.5)
+        )
+    }
+  
+    plot_residuals("residuals_filtered_t1", "RPL Theme 1")
+    plot_residuals("residuals_filtered_t2", "RPL Theme 2")
+    plot_residuals("residuals_filtered_t3", "RPL Theme 3")
+    plot_residuals("residuals_filtered_t4", "RPL Theme 4")
+  
+  # Print Summaries of the Models
+    summary(rlm_Fl_SVI_t1_filtered)
+    summary(rlm_Fl_SVI_t2_filtered)
+    summary(rlm_Fl_SVI_t3_filtered)
+    summary(rlm_Fl_SVI_t4_filtered)
+```
+
+
+
+```{r Graphically visualizing SOVI}
+
+  # Step 1: Generate a sequence of SOVI values for predictions
+    sovi_range <- seq(
+      min(Keratitis_SVI_Florida$RPL_themes, na.rm = TRUE), 
+      max(Keratitis_SVI_Florida$RPL_themes, na.rm = TRUE), 
+      length.out = 100
+    )
+  
+  # Step 2: Create a dataset for predictions
+    pred_data_sovi <- data.frame(
+      RPL_themes = sovi_range,  # Range of SOVI values
+      Sample_Size = median(Keratitis_SVI_Florida$Sample_Size, na.rm = TRUE),  # Typical Sample_Size for offset
+      W_Residuals = 0  # Assume no spatial residuals in baseline predictions
+    )
+  
+  # Step 3: Generate predictions with confidence intervals
+    predictions <- predict(rlm_Fl_SVI_filtered, newdata = pred_data_sovi, se.fit = TRUE)
+  
+  # Step 4: Add predicted values and standard errors to the dataset
+    pred_data_sovi$estimate <- predictions$fit
+    pred_data_sovi$std_error <- predictions$se.fit
+  
+  # Step 5: Compute 95% Confidence Intervals
+    pred_data_sovi <- pred_data_sovi %>%
+      mutate(
+        lower_ci = estimate - 1.96 * std_error,
+        upper_ci = estimate + 1.96 * std_error
+      )
+  
+  # Step 6: Plot the relationship
+    SVI_Full_graphic <- ggplot(pred_data_sovi, aes(x = RPL_themes, y = estimate)) +
+      geom_line(color = "#40e0d0", size = 1) +
+      geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "#2d9d92", alpha = 0.2) +
+      labs(
+        title = "Estimated Keratitis Prevalence by Social Vulnerability Index",
+        x = "SOVI",
+        y = "Estimated Keratitis Prevalence Rate"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10)
+      )
+
+    
+  # Save the updated map as an SVG
+    output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/SVI_Full_graphic.svg"
+  
+  ggsave(output_path, plot = SVI_Full_graphic, width = 8, height = 6, dpi = 300)
+  
+```
+
+
+
+```{r Creating visualizations for subtheme models}
+
+  # Define color scheme for the plots (blue-green gradient)
+    line_color <- c("#2A5A5B", "#5A9178", "#7FC0E1", "#2D8BBA")  # Unique colors per theme
+    ribbon_color <- c("#567994", "#90B2B3", "#B8D6BE", "#73AE80")  # Matching transparency colors
+  
+  # Function to generate prediction dataset for a given theme model
+    generate_prediction_data <- function(model, theme_var, residual_var) {
+      # Generate 100 evenly spaced values for the theme variable
+      sovi_range <- seq(
+        min(Keratitis_SVI_Florida[[theme_var]], na.rm = TRUE), 
+        max(Keratitis_SVI_Florida[[theme_var]], na.rm = TRUE), 
+        length.out = 100
+      )
+    
+      # Create an empty dataframe with 100 rows
+      pred_data <- data.frame(
+        Sample_Size = rep(median(Keratitis_SVI_Florida$Sample_Size, na.rm = TRUE), 100),  # Replicate median sample size
+        W_Residuals = rep(0, 100)  # Assume no spatial residuals in baseline predictions
+      )
+      
+      # Add the correct theme variable and spatial residual column
+      pred_data[[theme_var]] <- sovi_range
+      colnames(pred_data)[colnames(pred_data) == "W_Residuals"] <- residual_var  # Ensure correct name for spatial residuals
+    
+      # Generate predictions
+      predictions <- predict(model, newdata = pred_data, se.fit = TRUE)
+      
+      # Store predicted values and standard errors
+      pred_data$estimate <- predictions$fit
+      pred_data$std_error <- predictions$se.fit
+      
+      # Compute 95% Confidence Intervals
+      pred_data <- pred_data %>%
+        mutate(
+          lower_ci = estimate - 1.96 * std_error,
+          upper_ci = estimate + 1.96 * std_error
+        )
+      
+      return(pred_data)
+    }
+    
+    # Generate prediction datasets for each theme
+    pred_data_t1 <- generate_prediction_data(rlm_Fl_SVI_t1_filtered, "RPL_theme1", "W_Residuals_t1")
+    pred_data_t2 <- generate_prediction_data(rlm_Fl_SVI_t2_filtered, "RPL_theme2", "W_Residuals_t2")
+    pred_data_t3 <- generate_prediction_data(rlm_Fl_SVI_t3_filtered, "RPL_theme3", "W_Residuals_t3")
+    pred_data_t4 <- generate_prediction_data(rlm_Fl_SVI_t4_filtered, "RPL_theme4", "W_Residuals_t4")
+    
+    
+    
+      
+    # Compute global y-axis limits (min/max across all themes)
+    y_min <- min(c(pred_data_t1$lower_ci, pred_data_t2$lower_ci, pred_data_t3$lower_ci, pred_data_t4$lower_ci), na.rm = TRUE)
+    y_max <- max(c(pred_data_t1$upper_ci, pred_data_t2$upper_ci, pred_data_t3$upper_ci, pred_data_t4$upper_ci), na.rm = TRUE)
+    
+    # Function to generate a plot with consistent y-axis
+    generate_plot <- function(pred_data, theme_var, theme_label, line_col, ribbon_col, y_min, y_max) {
+      ggplot(pred_data, aes_string(x = theme_var, y = "estimate")) +  
+        geom_line(color = line_col, size = 1) +
+        geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = ribbon_col, alpha = 0.2) +
+        ylim(y_min, y_max) +  # Apply consistent y-axis limits
+        labs(
+          title = paste("Estimated Keratitis Prevalence by", theme_label),
+          x = theme_label,
+          y = "Estimated Keratitis Prevalence Rate"
+        ) +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(size = 14, face = "bold"),
+          axis.title = element_text(size = 12),
+          axis.text = element_text(size = 10)
+        )
+    }
+    
+    # Generate plots for each theme with consistent y-axis
+    plot_t1 <- generate_plot(pred_data_t1, "RPL_theme1", "SVI Theme 1", line_color[1], ribbon_color[1], y_min, y_max)
+    plot_t2 <- generate_plot(pred_data_t2, "RPL_theme2", "SVI Theme 2", line_color[2], ribbon_color[2], y_min, y_max)
+    plot_t3 <- generate_plot(pred_data_t3, "RPL_theme3", "SVI Theme 3", line_color[3], ribbon_color[3], y_min, y_max)
+    plot_t4 <- generate_plot(pred_data_t4, "RPL_theme4", "SVI Theme 4", line_color[4], ribbon_color[4], y_min, y_max)
+    
+    # Print the plots
+    print(plot_t1)
+    print(plot_t2)
+    print(plot_t3)
+    print(plot_t4)
+
+  # Define the output directory for saving the plots
+  output_dir <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/"
+  
+  # Save each plot as an SVG
+  ggsave(paste0(output_dir, "SVI_Theme1_Graphic.svg"), plot = plot_t1, width = 8, height = 6, dpi = 300)
+  ggsave(paste0(output_dir, "SVI_Theme2_Graphic.svg"), plot = plot_t2, width = 8, height = 6, dpi = 300)
+  ggsave(paste0(output_dir, "SVI_Theme3_Graphic.svg"), plot = plot_t3, width = 8, height = 6, dpi = 300)
+  ggsave(paste0(output_dir, "SVI_Theme4_Graphic.svg"), plot = plot_t4, width = 8, height = 6, dpi = 300)
+
+
+```
+
+
+
+```{r Add SVI to full dataset}
+
+  # Step 1: Use find_svi() for all 50 states
+    all_states <- state.abb  # Vector of state abbreviations (e.g., "AL", "AK", ..., "WY")
+    years <- 2014:2019       # Vector of years
+  
+  # Repeat each state abbreviation for all years
+    state_repeated <- rep(all_states, each = length(years))
+  
+  # Repeat years to match the states
+    year_repeated <- rep(years, times = length(all_states))
+  
+  # Call find_svi() to fetch SVI data for all states and years
+    Keratitis_SVI_Full <- find_svi(
+      year = year_repeated,
+      state = state_repeated,
+      geography = "county"
+    )
+    
+  # Step 2: Check the resulting dataset
+    head(Keratitis_SVI_Full)
+  
+  # Step 3: Merge SVI data with the PovKer dataset
+    PovKer_Full <- PovKer %>%
+      left_join(Keratitis_SVI_Full, by = c("GEOID" = "GEOID", "year" = "year"))
+  
+  # Step 4: Split the dataset into a list of datasets by year
+    PovKer_by_year <- split(PovKer_Full, PovKer_Full$year)
+  
+  # Step 5: Save each dataset as a separate object in the R environment
+    for (year in names(PovKer_by_year)) {
+      assign(paste0("PovKer_", year), PovKer_by_year[[year]])
+    }
+  
+  # Step 6: Convert each yearly dataset to an sf object
+    PovKer_by_year <- lapply(PovKer_by_year, function(df) {
+      st_as_sf(df, sf_column_name = "geometry")
+    })
+  
+  # Step 7: Verify structure of one of the datasets
+    str(PovKer_by_year[[1]])
+    
+
+
+```
+
+
+
+```{r National Keratitis & SOVI contig map dataset}
+
+  # Compute the mean SoVI across years for each county using the existing dataset
+    SoVI_Means <- Keratitis_SVI_Full %>%
+      group_by(GEOID) %>%
+      summarise(across(where(is.numeric), mean, na.rm = TRUE)) %>%  # Average numeric columns
+      ungroup()
+  
+  # Merge SoVI averages with PovKermeans_contiguous
+    SoVIKerMeans_Contig <- PovKermeans_contiguous %>%
+      left_join(SoVI_Means, by = "GEOID")
+  
+  # Ensure the dataset remains an sf object
+    SoVIKerMeans_Contig <- st_as_sf(SoVIKerMeans_Contig, sf_column_name = "geometry")
+  
+  # Verify the structure
+    str(SoVIKerMeans_Contig)
+
+```
+
+
+
+```{r National keratitis & SOVI}
+
+  # Keratitis & Social Vulnerability theme 1 - Full US Dataset
+    rlm_US_SVI_t1 <- rlm(
+      Data_Value ~ RPL_theme1 + offset(log(Sample_Size)),
+      data = PovKer_Full
+    )
+    summary(rlm_US_SVI_t1)
+    lmtest::lrtest(rlm_US_SVI_t1)
+    AIC(rlm_US_SVI_t1)
+    BIC(rlm_US_SVI_t1)
+
+  # Keratitis & Social Vulnerability theme 2 - Full US Dataset
+    rlm_US_SVI_t2 <- rlm(
+      Data_Value ~ RPL_theme2 + offset(log(Sample_Size)),
+      data = PovKer_Full
+    )
+    summary(rlm_US_SVI_t2)
+    
+  # Keratitis & Social Vulnerability theme 3 - Full US Dataset
+    rlm_US_SVI_t3 <- rlm(
+      Data_Value ~ RPL_theme3 + offset(log(Sample_Size)),
+      data = PovKer_Full
+    )
+    summary(rlm_US_SVI_t3)
+    
+  # Keratitis & Social Vulnerability theme 4 - Full US Dataset
+    rlm_US_SVI_t4 <- rlm(
+      Data_Value ~ RPL_theme4 + offset(log(Sample_Size)),
+      data = PovKer_Full
+    )
+    summary(rlm_US_SVI_t4) 
+ 
+    
+  # Code to calculate p-values
+    t_value <- 5.0857
+    df <- 18460
+    p_value <- 2 * pt(abs(t_value), df, lower.tail = FALSE)
+    print(formatC(p_value, format = "f", digits = 16)) 
+    
+  # Extract standard error and coefficient for pov_pct
+    beta_hat <- coef(rlm_US_SVI_t1)["RPL_theme1"]  # Coefficient estimate
+    se_beta <- summary(rlm_US_SVI_t1)$coefficients["RPL_theme1", "Std. Error"]  # Standard error
+  
+  # Compute the 95% confidence interval
+    alpha <- 0.05
+    z_critical <- qnorm(1 - alpha / 2)  # 1.96 for a 95% CI
+  
+    lower_bound <- beta_hat - z_critical * se_beta
+    upper_bound <- beta_hat + z_critical * se_beta
+  
+  # Print results
+    cat("95% CI for pov_pct:", lower_bound, "to", upper_bound, "\n") 
+    
+    
+  # Function to extract model fit statistics for robust regression
+    extract_rlm_stats <- function(model, model_name) {
+      residual_se <- summary(model)$sigma
+      df_residual <- summary(model)$df[2]
+      
+      # Compute AIC and BIC manually (since rlm() does not return them)
+        n <- length(model$residuals)  # Sample size
+        log_likelihood <- sum(dnorm(model$residuals, mean = 0, sd = residual_se, log = TRUE))
+        aic <- -2 * log_likelihood + 2 * length(coef(model))
+        bic <- -2 * log_likelihood + log(n) * length(coef(model))
+      
+      # Compute Pseudo-R² (based on variance explained)
+        fitted_values <- model$fitted.values
+        y_actual <- model$model$Data_Value
+        tss <- sum((y_actual - mean(y_actual, na.rm = TRUE))^2, na.rm = TRUE)
+        rss <- sum(model$residuals^2, na.rm = TRUE)
+        pseudo_r2 <- 1 - (rss / tss)  # Similar to R² but robust
+      
+      # Return formatted output
+        return(data.frame(
+          Model = model_name,
+          Residual_SE = residual_se,
+          DF_Residual = df_residual,
+          AIC = round(aic, 2),
+          BIC = round(bic, 2),
+          Pseudo_R2 = round(pseudo_r2, 4)
+        ))
+    }
+  
+  # Extract statistics for both models
+    stats_svi <- extract_rlm_stats(rlm_US_SVI_t1, "SVI Theme 1 Model")
+    stats_pov <- extract_rlm_stats(rlm_US_pov_pct, "Poverty Model")
+    
+  # Combine and print the results
+    model_fit_stats <- rbind(stats_svi, stats_pov)
+    print(model_fit_stats)
+    
+
+    
+```
+
+
+
+```{r Four-case Bivar SOVI Map}
+
+  # Define the refined color palette
+    refined_muted_svi_keratitis <- c(
+      "1-1" = "#c8ada0", # Low SVI, low keratitis (light gray)
+      "2-1" = "#9972af", # High SVI, low keratitis (muted purple)
+      "1-2" = "#c8b35a", # Low SVI, high keratitis (warmer orange)
+      "2-2" = "#804d36"  # High SVI, high keratitis (muted pink)
+    )
+
+  # Step 1: Create bivariate classes
+    Keratitis_SVI_bi_2x2 <- bi_class(
+      Keratitis_SVI_Florida, # Spatial dataset
+      x = RPL_theme1,        # Social vulnerability index
+      y = Data_Value,        # Keratitis prevalence
+      style = "quantile",    # Quantile classification
+      dim = 2                # 2x2 grid
+    )
+  
+  # Step 2: Create the bivariate map without a legend
+    bivar_map_svi_keratitis <- ggplot() +
+      geom_sf(data = Keratitis_SVI_bi_2x2, aes(fill = bi_class)) +
+      scale_fill_manual(values = refined_muted_svi_keratitis) + # Apply the SVI-Keratitis palette
+      labs(
+        title = "Bivariate Map: Keratitis and Social Vulnerability Index (SVI)",
+        subtitle = "Florida Counties, 2014-2019"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "none",  # No legend in the map
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+  
+  # Step 3: Create a 2x2 cubed legend separately
+    bivar_legend_svi_keratitis <- bi_legend(
+      pal = refined_muted_svi_keratitis,
+      dim = 2,
+      xlab = "Higher Social Vulnerability Index (SVI)",
+      ylab = "Higher Keratitis Prevalence",
+      size = 8
+    )
+  
+  # Step 4: Combine the map and the separate cubed legend
+    final_plot_svi_keratitis <- ggdraw() +
+      draw_plot(bivar_map_svi_keratitis, 0, 0, 1, 1) #+       # Add the map
+      #draw_plot(bivar_legend_svi_keratitis, 0.7, 0.2, 0.25, 0.25) # Add the legend on the right
+  
+  # Step 5: Print the final map
+    final_plot_svi_keratitis
+
+
+```
+
+
+
+```{r Three level bivar plot}
+
+  # Define the purplegold 3x3 color palette
+    bluegreen <- c(
+      "1-1" = "#E8E8E8", # Low Keratitis, Low SVI DONE
+      "2-1" = "#7FC0E1", # Moderate Keratitis, Low SVI DONE
+      "3-1" = "#2D8BBA", # High Keratitis, Low SVI
+      "1-2" = "#B8D6BE", # Low Keratitis, Moderate SVI
+      "2-2" = "#90B2B3", # Moderate Keratitis, Moderate SVI
+      "3-2" = "#567994", # High Keratitis, Moderate SVI
+      "1-3" = "#73AE80", # Low Keratitis, High SVI
+      "2-3" = "#5A9178", # Moderate Keratitis, High SVI
+      "3-3" = "#2A5A5B"  # High Keratitis, High SVI
+    )
+  
+  # Step 1: Create bivariate classes
+    Keratitis_SVI_bi_3x3 <- bi_class(
+      Keratitis_SVI_Florida, # Spatial dataset
+      x = Data_Value,        # Social Vulnerability Index
+      y = RPL_themes,        # Keratitis prevalence
+      style = "quantile",    # Quantile classification
+      dim = 3                # 3x3 grid
+    )
+  
+  # Step 2: Create the bivariate map without a legend
+    bivar_map_svi_keratitis_3x3 <- ggplot() +
+      geom_sf(data = Keratitis_SVI_bi_3x3, aes(fill = bi_class)) +
+      scale_fill_manual(values = bluegreen) + # Apply the purplegold palette
+      labs(
+        title = "Bivariate Map: Keratitis and Social Vulnerability Index (SVI)",
+        subtitle = "Florida Counties, 2014-2019"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "none",  # No legend in the map
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+  
+  # Step 3: Create a 3x3 cubed legend separately
+    bivar_legend_svi_keratitis_3x3 <- bi_legend(
+      pal = bluegreen,
+      dim = 3,
+      xlab = "Higher Keratitis Prevalence",
+      ylab = "Higher Social Vulnerability Index (SVI)",
+      size = 8
+    )
+  
+  # Step 4: Combine the map and the separate cubed legend, moving the legend to the lower left
+    final_plot_svi_keratitis_3x3 <- ggdraw() +
+      draw_plot(bivar_map_svi_keratitis_3x3, 0, 0, 1, 1) +       # Add the map
+      draw_plot(bivar_legend_svi_keratitis_3x3, 0.275, 0.1, 0.25, 0.25) # Move the legend to the lower left
+  
+  # Step 5: Print the final map
+    final_plot_svi_keratitis_3x3
+
+    output_path <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/final_plot_svi_keratitis_3x3.svg"
+    
+    ggsave(output_path, plot = final_plot_svi_keratitis_3x3, width = 8, height = 6, dpi = 300)
+    
+```
+
+
+```{r yearly maps & gifs of bivar}
+  
+  # Define the output directory for yearly bivariate maps
+  output_dir_bivar <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Bivariate_Frames/"
+  
+  # Create output directory if it doesn't exist
+  if (!dir.exists(output_dir_bivar)) {
+    dir.create(output_dir_bivar, recursive = TRUE)
+  }
+  
+  # Define the blue-green 3x3 color palette
+  bluegreen <- c(
+    "1-1" = "#E8E8E8", # Low Keratitis, Low SVI DONE
+    "2-1" = "#7FC0E1", # Moderate Keratitis, Low SVI DONE
+    "3-1" = "#2D8BBA", # High Keratitis, Low SVI
+    "1-2" = "#B8D6BE", # Low Keratitis, Moderate SVI
+    "2-2" = "#90B2B3", # Moderate Keratitis, Moderate SVI
+    "3-2" = "#567994", # High Keratitis, Moderate SVI
+    "1-3" = "#73AE80", # Low Keratitis, High SVI
+    "2-3" = "#5A9178", # Moderate Keratitis, High SVI
+    "3-3" = "#2A5A5B"  # High Keratitis, High SVI
+  )
+  
+  
+  # Define years
+  years <- 2014:2019
+  
+  # Loop through each year to generate bivariate maps
+  for (i in seq_along(years)) {
+    year_label <- years[i]
+    
+    # Filter data for the current year
+    Keratitis_SVI_year <- Keratitis_SVI_Florida %>%
+      filter(year == year_label)
+    
+    # Step 1: Create bivariate classes (flipping variables)
+    Keratitis_SVI_bi <- bi_class(
+      Keratitis_SVI_year, 
+      x = Data_Value,     # Keratitis Prevalence (now x-axis)
+      y = RPL_themes,     # Social Vulnerability Index (now y-axis)
+      style = "quantile", 
+      dim = 3
+    )
+    
+    # Step 2: Create the bivariate map without a legend
+    bivar_map <- ggplot() +
+      geom_sf(data = Keratitis_SVI_bi, aes(fill = bi_class), color = "black", size = 0.1) +
+      scale_fill_manual(values = bluegreen, drop = FALSE) + # Apply the bluegreen palette
+      labs(
+        title = paste("Bivariate Map: Keratitis & SVI (", year_label, ")", sep = ""),
+        subtitle = "Florida Counties"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "none",  # No legend in the map
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+    
+    # Step 4: Combine the map and the separate cubed legend, positioning the legend in the lower left
+    final_plot_bivar <- ggdraw() +
+      draw_plot(bivar_map, 0, 0, 1, 1)
+    
+    # Step 5: Save the yearly bivariate map as PNG
+    output_path_bivar <- paste0(output_dir_bivar, "Bivariate_Keratitis_SVI_", year_label, ".png")
+    ggsave(output_path_bivar, plot = final_plot_bivar, width = 8, height = 6, dpi = 300)
+  
+    # Print confirmation
+    print(paste("Saved:", output_path_bivar))
+  }
+  
+  # Step 6: Read saved PNGs for animation
+  frames_bivar <- list.files(output_dir_bivar, pattern = "*.png", full.names = TRUE)
+  
+  # Ensure chronological order
+  frames_bivar_ordered <- frames_bivar[order(match(gsub(".*_(\\d{4})\\.png", "\\1", frames_bivar), as.character(years)))]
+  
+  # Read images in order
+  image_list_bivar <- image_read(frames_bivar_ordered)
+  
+  # Step 7: Create and save the bivariate GIF
+  gif_path_bivar <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/Bivariate_Keratitis_SVI_Animation.gif"
+  
+  gif_bivar <- image_animate(image_list_bivar, fps = 1)  # 1 frame per second
+  image_write(gif_bivar, gif_path_bivar)
+  
+  # Print confirmation
+  print(paste("Bivariate GIF successfully saved at:", gif_path_bivar))
+
+
+
+```
+
+
+
+
+```{r Florida Moran's Is for Keratitis & SVI}
+
+  # Create a spatial weights object using Queen Contiguity
+    wij <- queen_weights(Keratitis_SVI_Florida)
+  
+  # Convert sf object to a regular data frame (excluding geometry)
+    keratitis_data <- Keratitis_SVI_Florida %>%
+      st_drop_geometry() %>%  # Drop spatial information
+      dplyr::select(GEOID, Data_Value, RPL_theme1)  # Keep only relevant columns
+  
+  # Compute Univariate Local Moran’s I
+    lisa_keratitis <- local_moran(wij, keratitis_data["Data_Value"])  # Keratitis
+    lisa_svi <- local_moran(wij, keratitis_data["RPL_theme1"])  # Social Vulnerability Index
+  
+  # Extract LISA Cluster IDs
+    lisa_clusters_keratitis <- lisa_clusters(lisa_keratitis)
+    lisa_clusters_svi <- lisa_clusters(lisa_svi)
+  
+  # Define Custom Colors for LISA Clusters
+    custom_lisa_colors <- c(
+      "High-High" = "#c00000",  # Red
+      "Low-Low" = "#3f898c",    # Blue
+      "High-Low" = "#d99090",   # Orange
+      "Low-High" = "#b4e0d9",   # Light blue
+      "Non-Significant" = "#e0e0e0" # Light grey
+    )
+  
+  # Assign Colors to Clusters
+    cluster_labels <- lisa_labels(lisa_keratitis)  # Get LISA labels
+    custom_colors <- setNames(custom_lisa_colors[cluster_labels], cluster_labels)
+  
+  # Plot LISA Map for Keratitis
+    plot(
+      st_geometry(Keratitis_SVI_Florida),
+      col = sapply(lisa_clusters_keratitis, function(x) custom_colors[x + 1]),
+      border = "#333333",  # Dark gray borders
+      lwd = 0.2            # Thin borders
+    )
+    title(main = "Univariate Local Moran's I: Keratitis Prevalence")
+    legend(
+      "bottomleft",
+      legend = names(custom_lisa_colors),    
+      fill = unname(custom_lisa_colors),    
+      border = "#eeeeee",
+      title = "Cluster Types"
+    )
+    
+  # Plot LISA Map for SVI
+    plot(
+      st_geometry(Keratitis_SVI_Florida),
+      col = sapply(lisa_clusters_svi, function(x) custom_colors[x + 1]),
+      border = "#333333",  # Dark gray borders
+      lwd = 0.2            # Thin borders
+    )
+    title(main = "Univariate Local Moran's I: Social Vulnerability Index")
+    legend(
+      "bottomleft",
+      legend = names(custom_lisa_colors),    
+      fill = unname(custom_lisa_colors),    
+      border = "#eeeeee",
+      title = "Cluster Types"
+
+# Open SVG device
+svg(filename = "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/keratitis_lisa_map.svg",
+    width = 10,    # Width in inches
+    height = 8)    # Height in inches
+
+# Your existing plotting code here
+plot(
+  st_geometry(Keratitis_SVI_Florida),
+  col = sapply(lisa_clusters_keratitis, function(x) custom_colors[x + 1]),
+  border = "#333333",
+  lwd = 0.2
+)
+title(main = "Univariate Local Moran's I: Keratitis Prevalence")
+legend(
+  "bottomleft",
+  legend = names(custom_lisa_colors),    
+  fill = unname(custom_lisa_colors),    
+  border = "#eeeeee",
+  title = "Cluster Types"
+)
+
+# Close the device and save the file
+dev.off()
+
+
+```
+
+
+
+```{r Saving Univariate FL LISAs}
+
+  # Define output directory
+    output_dir_lisa <- "C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Eversight/Keratitis_Epi/Figures/Florida/"
+  
+  # Create directory if it doesn't exist
+    if (!dir.exists(output_dir_lisa)) {
+      dir.create(output_dir_lisa, recursive = TRUE)
+    }
+  
+  # Define Custom Colors for LISA Clusters
+    custom_lisa_colors <- c(
+      "High-High" = "#c00000",  # Red
+      "Low-Low" = "#3f898c",    # Blue
+      "High-Low" = "#d99090",   # Orange
+      "Low-High" = "#b4e0d9",   # Light blue
+      "Non-Significant" = "#e0e0e0" # Light grey
+    )
+  
+  # Step 1: Create spatial weights using Queen Contiguity
+    wij <- queen_weights(Keratitis_SVI_Florida)
+  
+  # Step 2: Compute Univariate Local Moran’s I for both Keratitis and SVI
+    lisa_keratitis <- local_moran(wij, Keratitis_SVI_Florida["Data_Value"])  
+    lisa_svi <- local_moran(wij, Keratitis_SVI_Florida["RPL_themes"])  
+  
+  # Step 3: Extract LISA Cluster IDs
+    lisa_clusters_keratitis <- factor(lisa_clusters(lisa_keratitis), labels = names(custom_lisa_colors))
+    lisa_clusters_svi <- factor(lisa_clusters(lisa_svi), labels = names(custom_lisa_colors))
+  
+  # Step 4: Save Keratitis LISA Map as SVG
+    svg(paste0(output_dir_lisa, "Keratitis_Lisa.svg"), width = 8, height = 6)
+    plot(
+      st_geometry(Keratitis_SVI_Florida),
+      col = custom_lisa_colors[as.character(lisa_clusters_keratitis)],
+      border = "#333333",
+      lwd = 0.2
+    )
+    title(main = "Univariate Local Moran's I: Keratitis Prevalence")
+    legend(
+      "bottomleft",
+      legend = names(custom_lisa_colors),    
+      fill = unname(custom_lisa_colors),    
+      border = "#eeeeee",
+      title = "Cluster Types"
+    )
+    dev.off()
+  
+    print("Saved: Keratitis_Lisa.svg")
+  
+  # Step 5: Save SVI LISA Map as SVG
+    svg(paste0(output_dir_lisa, "SVI_Lisa.svg"), width = 8, height = 6)
+    plot(
+      st_geometry(Keratitis_SVI_Florida),
+      col = custom_lisa_colors[as.character(lisa_clusters_svi)],
+      border = "#333333",
+      lwd = 0.2
+    )
+    title(main = "Univariate Local Moran's I: Social Vulnerability Index")
+    legend(
+      "bottomleft",
+      legend = names(custom_lisa_colors),    
+      fill = unname(custom_lisa_colors),    
+      border = "#eeeeee",
+      title = "Cluster Types"
+    )
+    dev.off()
+    
+    print("Saved: SVI_Lisa.svg")
+
+```
+
+
+
+
+```{r bivariate LISA using rgeoda}
+
+  # Create a spatial weights object
+    wij <- queen_weights(Keratitis_SVI_Florida)
+  
+  # Run the bivariate local Moran's I
+    qsa <- local_bimoran(wij, Keratitis_SVI_Florida[c('Data_Value', 'RPL_theme1')])
+  
+  # Define your custom LISA colors
+    custom_lisa_colors <- c(
+      "High-High" = "#c00000",  # Red
+      "Low-Low" = "#3f898c",    # Blue
+      "High-Low" = "#d99090",   # Orange
+      "Low-High" = "#b4e0d9",   # Light blue
+      "Non-Significant" = "#e0e0e0" # Light grey
+    )
+  
+  # Get LISA cluster IDs
+    lisa_clusters <- lisa_clusters(qsa)
+  
+  # Map cluster IDs to your custom colors
+    cluster_labels <- lisa_labels(qsa)
+    cluster_ids <- unique(lisa_clusters)
+  
+  # Create a named vector of colors based on your custom palette
+    custom_colors <- sapply(cluster_ids, function(x) {
+      cluster_label <- cluster_labels[x + 1]  # Adjust index for 0-based IDs
+      custom_lisa_colors[cluster_label]
+    })
+  
+  # Map LISA clusters with custom colors
+    plot(
+      st_geometry(Keratitis_SVI_Florida),
+      col = sapply(lisa_clusters, function(x) custom_colors[x + 1]),
+      border = "#333333", # Dark gray borders
+      lwd = 0.2           # Thin borders
+    )
+  
+  # Add a title
+    title(main = "Bivariate Local Moran's I: Keratitis & SVI")
+  
+  # Add a legend
+    legend(
+      "bottomleft",
+      legend = names(custom_lisa_colors),    # Cluster types
+      fill = unname(custom_lisa_colors),    # Corresponding colors
+      border = "#eeeeee",                    # Light gray borders for legend boxes
+      title = "Cluster Types"                # Legend title
+    )
+
+
+```
+
+
+
+```{r }
+
+  refined_muted_svi_keratitis_2x2 <- c(
+    "1-1" = "#f0f0f0", # Low SVI, low keratitis (light gray)
+    "2-1" = "#89CFF0", # High SVI, low keratitis (soft sky blue)
+    "1-2" = "#FFA07A", # Low SVI, high keratitis (muted salmon)
+    "2-2" = "#8B4B8B"  # High SVI, high keratitis (deeper burnt orange)
+  )
+  
+  # Prepare the dataset: Remove Puerto Rico, Alaska, and Hawaii
+    PovKer_Full <- PovKer_Full %>%
+      filter(!grepl("Puerto Rico|Alaska|Hawaii", NAME)) %>% 
+      mutate(
+        RPL_theme1 = ifelse(is.na(RPL_theme1), 0, RPL_theme1), # Handle any NAs in SVI
+        Data_Value = ifelse(is.na(Data_Value), 0, Data_Value)   # Handle any NAs in Keratitis Prevalence
+      )
+  
+  # Create bivariate classes for SVI and Keratitis
+    PovKerFull_bi_2x2 <- bi_class(
+      SoVIKerMeans_Contig,            
+      x = RPL_theme1,         # Social vulnerability index
+      y = Data_Value,         # Keratitis prevalence
+      style = "quantile",     
+      dim = 2                
+    )
+  
+  # Create the bivariate map with the new refined color scheme and county borders
+    bivar_map_svi <- ggplot() +
+      geom_sf(data = PovKerFull_bi_2x2, aes(fill = bi_class)) +  # Thin county borders
+      scale_fill_manual(values = refined_muted_svi_keratitis_2x2) + 
+      labs(
+        title = "Keratitis and Social Vulnerability: High versus Low County Estimates"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "none", 
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+  
+  # Create a separate 2x2 legend
+    bivar_legend_svi <- bi_legend(
+      pal = refined_muted_svi_keratitis_2x2,
+      dim = 2,
+      xlab = "Higher Social Vulnerability (Blue)",
+      ylab = "Higher Keratitis (Orange)",
+      size = 8
+    )
+  
+  # Combine the map and legend
+    final_plot_svi <- ggdraw() +
+      draw_plot(bivar_map_svi, 0, 0, 1, 1) +       
+      draw_plot(bivar_legend_svi, 0.1, 0.1, 0.3, 0.3) 
+
+  
+  # Print the final map
+    final_plot_svi
+```
+
+
+
+```{r }
+refined_muted_pop_2x2 <- c(
+  "1-1" = "#f0f0f0", # Low poverty, low keratitis (light gray)
+  "2-1" = "#FFD700", # High poverty, low keratitis (muted purple)
+  "1-2" = "#FFA07A", # Low poverty, high keratitis (warmer orange)
+  "2-2" = "#D67D3D"  # High poverty, high keratitis (muted pink)
+)
+
+library(ggplot2)
+library(biscale)
+library(cowplot)
+
+# Create bivariate classes
+PovKermeans_bi_2x2 <- bi_class(
+  PovKermeans_contiguous, # Your spatial dataset
+  x = pov_pct,            # Poverty percentage
+  y = KerPrevRates,       # Keratitis prevalence rates
+  style = "quantile",     # Quantile classification
+  dim = 2                 # 2x2 grid
+)
+
+
+
+# Create the bivariate map without a legend
+bivar_map_pop <- ggplot() +
+  geom_sf(data = PovKermeans_bi_2x2, aes(fill = bi_class)) +
+  scale_fill_manual(values = refined_muted_pop_2x2) + # Apply the POP palette
+  labs(
+    title = "Keratitis and Poverty: High versus Low County Estimates"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none", # No legend in the map
+    plot.title = element_text(size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5)
+  )
+
+# Create a 2x2 cubed legend separately
+bivar_legend_pop <- bi_legend(
+  pal = refined_muted_pop_2x2,
+  dim = 2,
+  xlab = "Higher Poverty (Purple)",
+  ylab = "Higher Keratitis (Pink)",
+  size = 8
+)
+
+# Combine the map and the separate cubed legend
+final_plot_pop <- ggdraw() +
+  draw_plot(bivar_map_pop, 0, 0, 1, 1) #+       # Add the map
+  #draw_plot(bivar_legend_pop, 0.1, 0.1, 0.3, 0.3) # Add the legend in the bottom left corner
+
+# Print the final map
+final_plot_pop
+
+```
+
+
+```{r }
+
+# Step 1: Create Bivariate Classifications for SoVI and Poverty
+SoVIKerMeans_Contig_Biv <- SoVIKerMeans_Contig %>%
+  mutate(
+    # SoVI Bivariate Classification
+    sovi_bivar_class = case_when(
+      RPL_theme1 < median(RPL_theme1, na.rm = TRUE) & Data_Value < median(Data_Value, na.rm = TRUE) ~ "Low-Low",
+      RPL_theme1 >= median(RPL_theme1, na.rm = TRUE) & Data_Value < median(Data_Value, na.rm = TRUE) ~ "High-Low",
+      RPL_theme1 < median(RPL_theme1, na.rm = TRUE) & Data_Value >= median(Data_Value, na.rm = TRUE) ~ "Low-High",
+      RPL_theme1 >= median(RPL_theme1, na.rm = TRUE) & Data_Value >= median(Data_Value, na.rm = TRUE) ~ "High-High",
+      TRUE ~ NA_character_
+    ),
+    
+    # Poverty Bivariate Classification
+    poverty_bivar_class = case_when(
+      pov_pct < median(pov_pct, na.rm = TRUE) & Data_Value < median(Data_Value, na.rm = TRUE) ~ "Low-Low",
+      pov_pct >= median(pov_pct, na.rm = TRUE) & Data_Value < median(Data_Value, na.rm = TRUE) ~ "High-Low",
+      pov_pct < median(pov_pct, na.rm = TRUE) & Data_Value >= median(Data_Value, na.rm = TRUE) ~ "Low-High",
+      pov_pct >= median(pov_pct, na.rm = TRUE) & Data_Value >= median(Data_Value, na.rm = TRUE) ~ "High-High",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Step 2: Function to Generate Count and Percentage Tables
+generate_category_table <- function(data, category_column, title) {
+  total_count <- nrow(data)
+  
+  category_counts <- data %>%
+    count(!!sym(category_column), .drop = FALSE) %>%  # Count each category, including NAs
+    mutate(
+      percent = (n / total_count) * 100  # Calculate the percentage
+    ) %>%
+    rename(Category = !!sym(category_column), Count = n, Percentage = percent)  # Rename columns
+
+  # Create and return a formatted table
+  kable(category_counts, "html", caption = title, digits = 1) %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+}
+
+# Step 3: Generate Tables for SoVI and Poverty Bivariate Classifications
+sovi_table <- generate_category_table(SoVIKerMeans_Contig_Biv, "sovi_bivar_class", 
+                                      "SoVI Bivariate Classification - County Counts")
+
+poverty_table <- generate_category_table(SoVIKerMeans_Contig_Biv, "poverty_bivar_class", 
+                                         "Poverty Bivariate Classification - County Counts")
+
+# Print tables
+sovi_table
+poverty_table
+
+# Function to generate count and percentage tables
+generate_category_table <- function(data, category_column, title) {
+  total_count <- nrow(data)
+  
+  category_counts <- data %>%
+    count(!!sym(category_column), .drop = FALSE) %>%  # Count each category, including NAs
+    mutate(Percentage = (n / total_count) * 100) %>%  # Calculate percentage
+    rename(Category = !!sym(category_column), Count = n)  # Rename columns
+
+  # Create and return a formatted table
+  kable(category_counts, "html", caption = title, digits = 1) %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+}
+
+# Check if columns exist
+colnames(SoVIKerMeans_Contig_Biv)  
+
+# Generate tables only if the column exists
+if ("sovi_bivar_class" %in% colnames(SoVIKerMeans_Contig_Biv)) {
+  sovi_table <- generate_category_table(SoVIKerMeans_Contig_Biv, "sovi_bivar_class", 
+                                        "SoVI Bivariate Classification - County Counts")
+} else {
+  cat("Error: Column 'sovi_bivar_class' not found in dataset.\n")
+}
+
+if ("poverty_bivar_class" %in% colnames(SoVIKerMeans_Contig_Biv)) {
+  poverty_table <- generate_category_table(SoVIKerMeans_Contig_Biv, "poverty_bivar_class", 
+                                           "Poverty Bivariate Classification - County Counts")
+} else {
+  cat("Error: Column 'poverty_bivar_class' not found in dataset.\n")
+}
+
+# Print tables if successfully generated
+if (exists("sovi_table")) print(sovi_table)
+if (exists("poverty_table")) print(poverty_table)
+
+
+library(dplyr)
+library(stringr)
+
+# Define U.S. Census Bureau regions using full state names
+region_mapping <- list(
+  "Northeast" = c("Maine", "New Hampshire", "Vermont", "Massachusetts", "Rhode Island", "Connecticut",
+                  "New York", "New Jersey", "Pennsylvania"),
+  "Midwest"   = c("Ohio", "Indiana", "Illinois", "Michigan", "Wisconsin", "Minnesota",
+                  "Iowa", "Missouri", "North Dakota", "South Dakota", "Nebraska", "Kansas"),
+  "South"     = c("Delaware", "Maryland", "District of Columbia", "Virginia", "West Virginia", "Kentucky",
+                  "North Carolina", "South Carolina", "Tennessee", "Georgia", "Alabama", "Mississippi",
+                  "Arkansas", "Louisiana", "Oklahoma", "Texas", "Florida"),
+  "West"      = c("Montana", "Idaho", "Wyoming", "Colorado", "New Mexico", "Arizona",
+                  "Utah", "Nevada", "Washington", "Oregon", "California")
+)
+
+# Function to extract the state name from the "NAME" column
+extract_state <- function(name) {
+  state_name <- str_extract(name, "\\b[A-Za-z]+(?:\\s[A-Za-z]+)*$")  # Extract last word (state name)
+  return(state_name)
+}
+
+# Assign regions based on extracted state names
+assign_region <- function(state_name) {
+  region <- names(region_mapping)[sapply(region_mapping, function(states) state_name %in% states)]
+  if (length(region) == 0) return(NA) else return(region)
+}
+
+# Step 1: Extract state names from the "NAME" column
+SoVIKerMeans_Contig_Biv <- SoVIKerMeans_Contig_Biv %>%
+  mutate(state = sapply(NAME, extract_state),
+         region = sapply(state, assign_region))  # Assign region
+
+# Step 2: Create base R tables for bivariate classifications by region
+generate_region_category_table <- function(data, category_column, title) {
+  cat("\n", title, "\n")
+  print(table(data$region, data[[category_column]], useNA = "ifany"))  # Simple contingency table
+}
+
+# Generate tables for SoVI and Poverty classifications by region
+sovi_region_table <- generate_region_category_table(SoVIKerMeans_Contig_Biv, "sovi_bivar_class", 
+                                                    "SoVI Bivariate Classification by U.S. Region")
+
+poverty_region_table <- generate_region_category_table(SoVIKerMeans_Contig_Biv, "poverty_bivar_class", 
+                                                       "Poverty Bivariate Classification by U.S. Region")
+
+# View the first few rows to check correct region assignment
+head(SoVIKerMeans_Contig_Biv[, c("NAME", "state", "region")])
+
+
+# Function to generate count, row percentage, and column percentage tables
+generate_region_category_table <- function(data, category_column, title) {
+  cat("\n", title, "\n")
+  
+  # Create a contingency table
+  table_data <- table(data$region, data[[category_column]], useNA = "ifany")
+
+  # Compute row percentages
+  row_percent <- round(prop.table(table_data, margin = 1) * 100, 1)
+  
+  # Compute column percentages
+  col_percent <- round(prop.table(table_data, margin = 2) * 100, 1)
+  
+  # Print tables
+  cat("\nAbsolute Counts:\n")
+  print(table_data)
+  
+  cat("\nRow Percentages:\n")
+  print(row_percent)
+  
+  cat("\nColumn Percentages:\n")
+  print(col_percent)
+}
+
+# Generate tables for SoVI and Poverty classifications by region
+sovi_region_table <- generate_region_category_table(SoVIKerMeans_Contig_Biv, "sovi_bivar_class", 
+                                                    "SoVI Bivariate Classification by U.S. Region")
+
+poverty_region_table <- generate_region_category_table(SoVIKerMeans_Contig_Biv, "poverty_bivar_class", 
+                                                       "Poverty Bivariate Classification by U.S. Region")
+
+
+
+```
