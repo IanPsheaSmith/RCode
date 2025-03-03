@@ -1,0 +1,3773 @@
+---
+title: "Fik_Models"
+author: "IAPS"
+date: "2023-11-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+### Libaries & Packages
+library(ggplot2)
+library(readxl)
+library(dplyr)
+library(ggfortify)
+library(gridExtra)
+library(MASS)
+library(pscl)
+library(gamlss)
+library(aod)
+library(dunn.test)
+library(car)
+library(performance)
+library(stargazer)
+install.packages("countreg", repos="http://R-Forge.R-project.org")
+library(countreg)
+library(AER)
+library(car)
+library(flexmix)
+library(gamlss)
+library(gamlss.dist)
+library(lmtest)
+library(mboost)
+library(methods)
+library(nonnest2)
+library(sandwich)
+library(topmodel)
+library(fastDummies)
+
+
+
+
+```
+
+```{r Import Dataset}
+
+ILE <- read_excel("ILE.xlsx", sheet = "ILE", 
+    col_types = c("numeric", "text", "date", 
+        "text", "text", "numeric", "text", 
+        "text", "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric"))
+  View(ILE)
+ILEN <- read_excel("C:/Users/ianpsheasmith/OneDrive - University of Florida/Past Projects and Research/Fik/ILE_N.xlsx", sheet = "Matriz de datos")
+View(ILEN)
+
+  # ILE w/o old vars
+    ILE <- ILE %>% dplyr::select(-TotMosq, -No_individuos, -CxTotal, -CxQ, -biCxQ, -Aeae, -biAeae, -NonAeae, -NonCx, -NonCxQ, -NonCxQ, -Feb, -Jan, -Mar, -Apr, -May, -Jun, -Jul_21, -Jul_22, -Aug, -Sep, -Oct, -Nov, -Dec)
+```
+
+
+
+```{r Rootgram Code}
+rootogram <- function(object, ...) {
+  UseMethod("rootogram")
+}
+
+rootogram.default <- function(object, fitted, breaks = NULL,
+  style = c("hanging", "standing", "suspended"),
+  scale = c("sqrt", "raw"), plot = TRUE,
+  width = NULL, xlab = NULL, ylab = NULL, main = NULL, ...)
+{
+  ## rectangle style
+  scale <- match.arg(scale)
+  style <- match.arg(style)
+
+  ## default annotation
+  if(is.null(xlab)) {
+    xlab <- if(is.null(names(dimnames(object)))) {
+      deparse(substitute(object))
+    } else {
+      names(dimnames(object))[1L]
+    }
+  }
+  if(is.null(ylab)) {
+    ylab <- if(scale == "raw") "Frequency" else "sqrt(Frequency)" 
+  }
+  if(is.null(main)) main <- deparse(substitute(fitted))
+  
+  ## breaks, midpoints, widths
+  if(is.null(breaks)) {
+    x <- as.numeric(names(object))
+    if(length(x) < 1L) x <- 0L:(length(object) - 1L)
+    breaks <- (head(x, -1L) + tail(x, -1L))/2
+    breaks <- c(2 * head(x, 1L) - head(breaks, 1L), breaks,
+      2 * tail(x, 1L) - tail(breaks, 1L))
+    if(is.null(width)) width <- 0.9
+  } else {
+    x <- (head(breaks, -1L) + tail(breaks, -1L))/2
+    if(is.null(width)) width <- 1
+  }
+
+  ## raw vs. sqrt scale
+  if(scale == "sqrt") {
+    obsrvd <- sqrt(as.vector(object))
+    expctd <- sqrt(as.vector(fitted))
+  } else {
+    obsrvd <- as.vector(object)
+    expctd <- as.vector(fitted)
+  }
+
+  ## height/position of rectangles
+  y <- if(style == "hanging") expctd - obsrvd else 0
+  height <- if(style == "suspended") expctd - obsrvd else obsrvd
+
+  ## collect everything as data.frame
+  rval <- data.frame(observed = as.vector(object), expected = as.vector(fitted),
+    x = x, y = y, width = diff(breaks) * width, height = height,
+    line = expctd)
+  attr(rval, "style") <- style
+  attr(rval, "scale") <- scale
+  attr(rval, "xlab") <- xlab
+  attr(rval, "ylab") <- ylab
+  attr(rval, "main") <- main
+  class(rval) <- c("rootogram", "data.frame")
+  
+  ## also plot by default
+  if(plot) plot(rval, ...)
+  
+  ## return invisibly
+  invisible(rval)
+}
+
+c.rootogram <- rbind.rootogram <- function(...)
+{
+  ## list of rootograms
+  rval <- list(...)
+  
+  ## group sizes
+  for(i in seq_along(rval)) {
+    if(is.null(rval[[i]]$group)) rval[[i]]$group <- 1L
+  }
+  n <- lapply(rval, function(r) table(r$group))
+
+  ## labels
+  style <- unlist(lapply(rval, function(r) attr(r, "style")))
+  scale <- unlist(lapply(rval, function(r) attr(r, "scale")))
+  xlab <- unlist(lapply(rval, function(r) attr(r, "xlab")))
+  ylab <- unlist(lapply(rval, function(r) attr(r, "ylab")))
+  nam <- names(rval)
+  main <- if(is.null(nam)) {
+    as.vector(sapply(rval, function(r) attr(r, "main")))
+  } else {
+    make.unique(rep.int(nam, sapply(n, length)))
+  }
+  n <- unlist(n)
+
+  ## combine and return
+  rval <- do.call("rbind.data.frame", rval)
+  rval$group <- if(length(n) < 2L) NULL else rep.int(seq_along(n), n)
+  attr(rval, "style") <- style
+  attr(rval, "scale") <- scale
+  attr(rval, "xlab") <- xlab
+  attr(rval, "ylab") <- ylab
+  attr(rval, "main") <- main
+  class(rval) <- c("rootogram", "data.frame")
+  return(rval)
+}
+
+plot.rootogram <- function(x,
+  xlim = NULL, ylim = NULL, xlab = NULL, ylab = NULL, main = NULL,
+  border = "black", fill = "lightgray", col = "#B61A51",
+  lwd = 2, pch = 19, lty = 1, max = NULL, type = NULL, axes = TRUE, ...)
+{
+  ## handling of groups
+  if(is.null(x$group)) x$group <- 1L
+  n <- max(x$group)
+  if(is.null(type)) type <- ifelse(any(table(x$group) > 20L), "l", "b")
+
+  ## annotation
+  if(is.null(xlab)) xlab <- TRUE
+  if(is.null(ylab)) ylab <- TRUE
+  if(is.null(main)) main <- TRUE
+  xlab <- rep(xlab, length.out = n)
+  ylab <- rep(ylab, length.out = n)
+  main <- rep(main, length.out = n)
+  if(is.logical(xlab)) xlab <- ifelse(xlab, attr(x, "xlab"), "")
+  if(is.logical(ylab)) ylab <- ifelse(ylab, attr(x, "ylab"), "")
+  if(is.logical(main)) main <- ifelse(main, attr(x, "main"), "")
+
+  ## plotting function
+  rootogram1 <- function(d, ...) {
+    ## rect elements
+    xleft <- d$x - d$width/2
+    xright <- d$x + d$width/2
+    ybottom <- d$y
+    ytop <- d$y + d$height
+    j <- unique(d$group)
+    
+    ## defaults
+    if(is.null(xlim)) xlim <- range(c(xleft, xright))
+    if(is.null(ylim)) ylim <- range(c(ybottom, ytop, d$line))
+
+    ## draw rootogram
+    plot(0, 0, type = "n", xlim = xlim, ylim = ylim,
+      xlab = xlab[j], ylab = ylab[j], main = main[j], axes = FALSE, ...)
+    if(axes) {
+      axis(1)
+      axis(2)
+    }
+    rect(xleft, ybottom, xright, ytop, border = border, col = fill)
+    abline(h = 0, col = border)
+    lines(d$x, d$line,
+      col = col, pch = pch, type = type, lty = lty, lwd = lwd)
+   }
+   
+   ## draw plots
+   if(n > 1L) par(mfrow = n2mfrow(n))
+   for(i in 1L:n) rootogram1(x[x$group == i, ], ...)
+}
+
+rootogram.numeric <- function(object, fitted, breaks = NULL,
+  start = NULL, width = NULL, xlab = NULL, ylab = NULL, main = NULL, ...)
+{
+  ## distribution to be fitted
+  dist <- fitted
+  if(!is.character(fitted)) fitted <- deparse(substitute(fitted))
+  if(substr(fitted, 1L, 1L) != "d") {
+    fitted <- match.arg(tolower(fitted),
+      c("beta", "cauchy", "chi-squared", "chisquared", "exponential", "f",
+        "gamma", "geometric", "log-normal", "lognormal", "logistic", "logseries", 
+	"negative binomial", "negbin", "normal", "gaussian", "poisson", "t", "weibull"))
+    fitted <- switch(fitted,
+      "chisquared" = "chi-squared",
+      "lognormal" = "log-normal",
+      "negbin" = "negative binomial",
+      "gaussian" = "normal",
+      fitted)
+    if(fitted == "logseries") {
+      dist <- function(x, logit, ...) dlogseries(x, plogis(logit), ...)
+      if(is.null(start)) start <- list(logit = 0)
+    } else {
+      if(is.character(dist)) dist <- fitted
+    }
+  }
+
+  ## labels
+  if(is.null(xlab)) xlab <- deparse(substitute(object))
+  if(is.null(main)) main <- sprintf('fitdistr(%s, "%s")', deparse(substitute(object)), fitted)
+
+  ## call MASS::fitdistr
+  xfit <- suppressWarnings(try(fitdistr(object, dist, start = start), silent = TRUE))
+  if(!inherits(xfit, "fitdistr")) stop("could not obtain fitted distribution")
+
+  ## fitted probability distribution function
+  pdist <- switch(fitted,
+    "beta" = pbeta,
+    "cauchy" = pcauchy, 
+    "chi-squared" = pchisq,
+    "exponential" = pexp,
+    "f" = pf, 
+    "gamma" = pgamma,
+    "geometric" = pgeom,
+    "log-normal" = plnorm, 
+    "logistic" = plogis,
+    "negative binomial" = pnbinom, 
+    "normal" = pnorm,
+    "poisson" = ppois,
+    "t" = function(x, m, s, df) pt((x - m)/s, df),
+    "weibull" = pweibull, 
+    paste("p", substr(fitted, 2L, nchar(fitted)), sep = ""))
+  if(fitted == "logseries") pdist <- function(x, logit, ...) plogseries(x, plogis(logit), ...)
+  if(is.character(pdist)) pdist <- try(get(pdist), silent = TRUE)
+  if(!is.function(pdist)) stop("invalid specification of fitted distribution")
+
+  ## second argument should be the full parameter vector
+  f <- formals(pdist)
+  args <- names(f)
+  m <- match(names(xfit$estimate), args)
+  formals(pdist) <- c(f[c(1, m)], f[-c(1, m)])
+  pfun <- function(x, parm, ...) pdist(x, parm, ...)
+  l <- length(xfit$estimate)
+  if(l > 1L) {
+    body(pfun) <- parse(text = paste("pdist(x, ", paste("parm[", 1L:l, "]", collapse = ", "), ", ...)"))
+  }
+
+  ## different default breaks for discrete distributions
+  if(is.null(breaks)) {
+    if(tolower(fitted) %in% c("geometric", "negative binomial", "poisson", "binomial", "logseries")) {
+      breaks <- (if(fitted == "logseries") 0L else -1L):max(object) + 0.5
+      if(is.null(width)) width <- 0.9
+    } else {
+      breaks <- "Sturges"
+    }
+  }
+
+  ## observed and expected frequencies
+  xhist <- hist(object, plot = FALSE, breaks = breaks)
+  expctd <- xfit$n * (pfun(tail(xhist$breaks, -1L), xfit$estimate) -
+    pfun(head(xhist$breaks, -1L), xfit$estimate))
+
+  ## call base rootogram function
+  rootogram.default(xhist$counts, expctd, breaks = xhist$breaks,
+    xlab = xlab, main = main, width = width, ...)
+}
+
+rootogram.zeroinfl <- rootogram.hurdle <- function(object, newdata = NULL,
+  max = NULL, xlab = NULL, main = NULL, width = 0.9, ...)
+{
+  ## observed response
+  mt <- terms(object)
+  mf <- if(is.null(newdata)) {
+    model.frame(object)
+  } else {
+    model.frame(mt, newdata, na.action = na.omit)
+  }
+  y <- model.response(mf)
+  w <- model.weights(mf)
+  if(is.null(w)) w <- rep(1, NROW(y))
+  
+  ## observed and expected frequencies
+  max0 <- if(is.null(max)) max(1.5 * max(y[w > 0]), 20L) else max  
+  obsrvd <- as.vector(xtabs(w ~ factor(y, levels = 0L:max0)))
+  expctd <- if(is.null(newdata)) {
+    colSums(predict(object, type = "prob", at = 0L:max0) * w)
+  } else {
+    colSums(predict(object, newdata = newdata, type = "prob", at = 0L:max0, na.action = na.omit) * w)
+  }
+
+  ## try to guess a good maximum
+  if(is.null(max)) {
+    max <- if(all(expctd >= 1L)) max0 else max(ceiling(mean(y)), min(which(expctd < 1L)) - 1L)
+    max <- min(max, length(expctd) - 1L)
+  }
+
+  ## observed and expected frequencies
+  obsrvd <- obsrvd[1L:(max + 1L)]
+  expctd <- expctd[1L:(max + 1L)]
+  
+  if(is.null(xlab)) xlab <- as.character(attr(mt, "variables"))[2L]
+  if(is.null(main)) main <- deparse(substitute(object))
+  rootogram.default(obsrvd, expctd, breaks = -1L:max + 0.5,
+    xlab = xlab, main = main, width = width, ...)  
+}
+
+rootogram.zerotrunc <- function(object, newdata = NULL,
+  max = NULL, xlab = NULL, main = NULL, width = 0.9, ...)
+{
+  ## observed response
+  mt <- terms(object)
+  mf <- if(is.null(newdata)) {
+    model.frame(object)
+  } else {
+    model.frame(mt, newdata, na.action = na.omit)
+  }
+  y <- model.response(mf)
+  w <- model.weights(mf)
+  if(is.null(w)) w <- rep(1, NROW(y))
+  
+  ## observed and expected frequencies
+  max0 <- if(is.null(max)) max(1.5 * max(y[w > 0]), 20L) else max  
+  obsrvd <- as.vector(xtabs(w ~ factor(y, levels = 1L:max0)))
+  expctd <- if(is.null(newdata)) {
+    colSums(predict(object, type = "prob", at = 1L:max0) * w)
+  } else {
+    colSums(predict(object, newdata = newdata, type = "prob", at = 1L:max0, na.action = na.omit) * w)
+  }
+
+  ## try to guess a good maximum
+  if(is.null(max)) {
+    max <- if(all(expctd >= 1L)) max0 else max(ceiling(mean(y)), min(which(expctd < 1L)))
+    max <- min(max, length(expctd))
+  }
+
+  ## observed and expected frequencies
+  obsrvd <- obsrvd[1L:max]
+  expctd <- expctd[1L:max]
+  
+  if(is.null(xlab)) xlab <- as.character(attr(mt, "variables"))[2L]
+  if(is.null(main)) main <- deparse(substitute(object))
+  rootogram.default(obsrvd, expctd, breaks = 0L:max + 0.5,
+    xlab = xlab, main = main, width = width, ...)  
+}
+
+rootogram.glm <- function(object, newdata = NULL, breaks = NULL,
+  max = NULL, xlab = NULL, main = NULL, width = NULL, ...) 
+{
+  family <- substr(family(object)$family, 1L, 17L)
+  if(!(family %in% c("negbin", "Negative Binomial", "poisson", "binomial", "gaussian"))) {
+    stop("family currently not supported")
+  }
+  
+  ## observed response
+  mt <- terms(object)
+  mf <- if(is.null(newdata)) {
+    model.frame(object)
+  } else {
+    model.frame(mt, newdata, na.action = na.omit)
+  }
+  y <- model.response(mf)
+  w <- model.weights(mf)
+  if(is.null(w)) w <- rep(1, NROW(y))
+  mu <- predict(object, newdata = newdata, type = "response", na.action = na.omit)
+
+  if(family == "gaussian") {
+    ## estimated standard deviation (ML)
+    s <- sqrt(weighted.mean(residuals(object)^2, w))
+
+    ## breaks
+    if(is.null(breaks)) breaks <- "Sturges"
+    breaks <- hist(y[w > 0], plot = FALSE, breaks = breaks)$breaks
+    obsrvd <- as.vector(xtabs(w ~ cut(y, breaks, include.lowest = TRUE)))
+
+    ## expected frequencies
+    p <- matrix(NA, nrow = length(y), ncol = length(breaks) - 1L)
+    for(i in 1L:ncol(p)) p[, i] <- pnorm(breaks[i + 1L], mean = mu, sd = s) -
+      pnorm(breaks[i], mean = mu, sd = s)
+    expctd <- colSums(p * w)
+  } else if(family == "binomial") {
+    ## successes and failures
+    if(NCOL(y) < 2L) y <- cbind(y, 1L - y)
+
+    ## number of attempts
+    size <- unique(rowSums(y))
+    if(length(size) > 1L) stop("rootogram only applicable to binomial distributions with same size")
+    at <- 0L:size
+    breaks <- -1L:size + 0.5
+    
+    ## observed and expected
+    obsrvd <- as.vector(xtabs(w ~ factor(y[, 1L], levels = at)))
+    p <- matrix(NA, length(mu), length(at))
+    for(i in at) p[, i + 1L] <- dbinom(i, prob = mu, size = size)
+    expctd <- colSums(p * w)
+  } else {
+    ## observed frequencies
+    max0 <- if(is.null(max)) max(1.5 * max(y[w > 0]), 20L) else max  
+    obsrvd <- as.vector(xtabs(w ~ factor(y, levels = 0L:max0)))
+
+    ## expected frequencies
+    at <- 0L:max0
+    p <- matrix(NA, length(mu), length(at))
+    if(family == "poisson") {
+      for(i in at) p[, i + 1L] <- dpois(i, lambda = mu)
+    } else {
+      theta <- object$theta
+      if(is.null(theta)) theta <- get(".Theta", environment(family(object)$variance))
+      for(i in at) p[, i + 1L] <- dnbinom(i, mu = mu, size = theta)
+    }
+    expctd <- colSums(p * w)
+
+    ## try to guess a good maximum
+    if(is.null(max)) {
+      max <- if(all(expctd >= 1L)) max0 else max(ceiling(mean(y)), min(which(expctd < 1L)) - 1L)
+      max <- min(max, length(expctd) - 1L)
+    }
+    breaks <- -1L:max + 0.5
+
+    ## observed and expected frequencies
+    obsrvd <- obsrvd[1L:(max + 1L)]
+    expctd <- expctd[1L:(max + 1L)]
+  }
+
+  if(is.null(xlab)) xlab <- as.character(attr(mt, "variables"))[2L]
+  if(is.null(main)) main <- deparse(substitute(object))
+  rootogram.default(obsrvd, expctd, breaks = breaks,
+    xlab = xlab, main = main,
+    width = if(family == "gaussian") 1 else 0.9, ...)  
+}
+
+autoplot.rootogram <- function(object,
+  colour = c("black", "#B61A51"), fill = "darkgray", size = c(1.2, 4), ...)
+{
+  ## determine grouping
+  class(object) <- "data.frame"
+  if(is.null(object$group)) object$group <- 1L
+  n <- max(object$group)
+  object$group <- factor(object$group, levels = 1L:n, labels = attr(object, "main"))
+
+  ## FIXME: unneeded copies just to avoid warnings in R CMD check
+  x <- object$x
+  y <- object$y
+  width <- object$width
+  height <- object$height
+  
+  ## rectangles and fitted lines
+  rval <- ggplot2::ggplot(object, ggplot2::aes(xmin = x - width/2, xmax = x + width/2, ymin = y, ymax = y + height, x = x, y = line)) +
+    ggplot2::geom_rect(colour = colour[1L], fill = fill) + ggplot2::geom_line(colour = colour[2L], size = size[1L]) +
+    ggplot2::geom_hline(yintercept = 0)
+  if(all(table(object$group) <= 20L)) rval <- rval + ggplot2::geom_point(colour = colour[2L], size = size[2L])
+
+  ## grouping (if any)
+  if(n > 1L) rval <- rval + ggplot2::facet_grid(group ~ .)
+  
+  ## annotation
+  rval <- rval + ggplot2::xlab(paste(unique(attr(object, "xlab")), collapse = "/")) +
+    ggplot2::ylab(paste(unique(attr(object, "ylab")), collapse = "/"))
+
+  ## return with annotation
+  rval
+}
+
+
+rootogram.gam <- function(object, newdata = NULL, breaks = NULL,
+                          max = NULL, xlab = NULL, main = NULL, width = NULL, ...) 
+{
+  family <- substr(family(object)$family, 1L, 17L)
+  if(!(family %in% c("Negative Binomial", "poisson", "binomial", "gaussian"))) {
+    stop("family currently not supported")
+  }
+  
+  ## observed response
+  mt <- terms(object)
+  mf <- if(is.null(newdata)) {
+    model.frame(object)
+  } else {
+    model.frame(mt, newdata, na.action = na.omit)
+  }
+  y <- model.response(mf)
+  mu <- predict(object, newdata = object$model, type = "response", na.action = na.omit)
+  
+  if(family == "gaussian") {
+    ## estimated standard deviation (ML)
+    s <- sqrt(mean(residuals(object)^2))
+    
+    ## breaks
+    if(is.null(breaks)) breaks <- "Sturges"
+    yhist <- hist(y, plot = FALSE, breaks = breaks)
+    breaks <- yhist$breaks
+    obsrvd <- yhist$count
+    
+    ## expected frequencies
+    p <- matrix(NA, nrow = length(y), ncol = length(breaks) - 1L)
+    for(i in 1L:ncol(p)) p[, i] <- pnorm(yhist$breaks[i + 1L], mean = mu, sd = s) -
+      pnorm(yhist$breaks[i], mean = mu, sd = s)
+    expctd <- colSums(p)
+  } else if(family == "binomial") {
+    ## successes and failures
+    if(NCOL(y) < 2L) y <- cbind(y, 1L - y)
+    
+    ## number of attempts
+    size <- unique(rowSums(y))
+    if(length(size) > 1L) stop("rootogram only applicable to binomial distributions with same size")
+    at <- 0L:size
+    breaks <- -1L:size + 0.5
+    
+    ## observed and expected
+    obsrvd <- table(factor(y[, 1L], levels = at))
+    p <- matrix(NA, length(mu), length(at))
+    for(i in at) p[, i + 1L] <- dbinom(i, prob = mu, size = size)
+    expctd <- colSums(p)
+  } else {
+    ## observed frequencies
+    max0 <- if(is.null(max)) max(1.5 * max(y), 20L) else max  
+    obsrvd <- table(factor(y, levels = 0L:max0))
+    
+    ## expected frequencies
+    at <- 0L:max0
+    p <- matrix(NA, length(mu), length(at))
+    if(family == "poisson") {
+      for(i in at) p[, i + 1L] <- dpois(i, lambda = mu)
+    } else {
+      theta <- object$theta
+      if(is.null(theta)) {
+          theta <- if (inherits(family(object), "extended.family")) { # family = nb
+              ## for nb, theta is on log scale; transform
+              family(object)$getTheta(trans = TRUE)
+          } else {                                                    # family = negbin
+              family(object)$getTheta()
+          }
+      }
+      for(i in at) p[, i + 1L] <- dnbinom(i, mu = mu, size = theta)
+    }
+    expctd <- colSums(p)
+    
+    ## try to guess a good maximum
+    if(is.null(max)) {
+      max <- if(all(expctd >= 1L)) max0 else max(ceiling(mean(y)), min(which(expctd < 1L)) - 1L)
+      max <- min(max, length(expctd) - 1L)
+    }
+    breaks <- -1L:max + 0.5
+    
+    ## observed and expected frequencies
+    obsrvd <- obsrvd[1L:(max + 1L)]
+    expctd <- expctd[1L:(max + 1L)]
+  }
+  
+  if(is.null(xlab)) xlab <- as.character(attr(mt, "variables"))[2L]
+  if(is.null(main)) main <- deparse(substitute(object))
+  rootogram.default(obsrvd, expctd, breaks = breaks,
+                    xlab = xlab, main = main,
+                    width = if(family == "gaussian") 1 else 0.9, ...)  
+}
+
+"+.rootogram" <- function(e1, e2) {
+  style <- unique(c(attr(e1, "style"), attr(e2, "style")))
+  if(length(style) > 1L) {
+    warning(sprintf("different styles (%s != %s) had been used, result now uses style = %s",
+      style[1L], style[2L], style[1L]))
+    style <- style[1L]
+  }
+  scale <- unique(c(attr(e1, "scale"), attr(e2, "scale")))
+  if(length(scale) > 1L) {
+    warning(sprintf("different scales (%s != %s) had been used, result now uses scale = %s",
+      scale[1L], scale[2L], scale[1L]))
+    scale <- scale[1L]
+  }
+
+  ylab <- attr(e1, "ylab")
+  xlab <- paste(unique(c(attr(e1, "xlab"), attr(e2, "xlab"))), collapse = " / ")
+  main <- paste(unique(c(attr(e1, "main"), attr(e2, "main"))), collapse = " / ")
+  e1 <- as.data.frame(e1)
+  e2 <- as.data.frame(e2)
+  e <- e1[e1$x %in% e2$x, ] + e2[e2$x %in% e1$x, ]
+  rootogram.default(structure(e$observed, .Names = e$x/2), e$expected,
+    style = style, scale = scale,
+    main = main, xlab = xlab, ylab = ylab, plot = FALSE)
+}
+
+```
+```{r qresiduals Code}
+qresiduals <- function(object, ...) {
+  UseMethod("qresiduals")
+}
+
+qresiduals.default <- function(object, type = c("random", "quantile"), nsim = 1L, prob = 0.5, ...)
+{
+  ## type of residual for discrete distribution (if any)
+  type <- match.arg(type)
+
+  ## if 'object' is not a vector/matrix, apply pit() method
+  if(is.object(object) | !is.numeric(object)) {
+    object <- try(pit(object))
+    if(inherits(object, "try-error")) stop("could not obtain probability integral transform from 'object'")
+  }
+
+  ## preprocess supplied probabilities
+  nc <- NCOL(object)
+  nr <- NROW(object)
+  if(nc > 2L) stop("quantiles must either be 1- or 2-dimensional")
+  if(nc == 2L) {
+    if(type == "random") {
+      object <- matrix(
+        runif(nr * nsim, min = rep(object[, 1L], nsim), max = rep(object[, 2L], nsim)),
+        nrow = nr, ncol = nsim, dimnames = list(rownames(object), paste("r", 1L:nsim, sep = "_"))
+      )
+    } else {
+      nam <- rownames(object)
+      object <- object[, 1L]  %*% t(1 - prob) + object[, 2L] %*% t(prob)
+      dimnames(object) <- list(nam, paste("q", prob, sep = "_"))
+    }
+    nc <- NCOL(object)
+  }
+  if(!is.null(dim(object)) & nc == 1L) object <- drop(object)
+
+  ## compute quantile residuals  
+  qnorm(object)
+}
+
+pit <- function(object, ...) {
+  UseMethod("pit")
+}
+
+pit.lm <- function(object, ...)
+{
+  ## obtain preprocessed response and fitted means
+  y <- if(!is.null(object$y)) object$y else model.response(model.frame(object))
+  mu <- fitted(object)
+  
+  ## compute probabilities from response distribution
+  pr <- pnorm(y, mean = mu, sd = summary(object)$sigma)
+  return(pr)
+}
+
+pit.glm <- function(object, ...)
+{
+  ## obtain preprocessed response and fitted means
+  y <- if(!is.null(object$y)) object$y else model.response(model.frame(object))
+  weights <- weights(object)
+  nobs <- nobs(object)
+  etastart <- NULL
+  mustart <- NULL
+  n <- NULL
+  eval(object$family$initialize)
+  mu <- fitted(object)
+  
+  ## compute probabilities from response distribution
+  pr <- switch(object$family$family,
+    "gaussian" = {
+      pnorm(y, mean = mu, sd = sqrt(sum((y - mu)^2) / df.residual(object)))
+    },
+    "poisson" = {
+      cbind(ppois(y - 1L, lambda = mu), ppois(y, lambda = mu))
+    },
+    "binomial" = {
+      y <- y * weights / n
+      if(!isTRUE(all.equal(as.numeric(y), as.numeric(round(y))))) {
+        stop("binomial quantile residuals require integer response")
+      }
+      y <- round(y)
+      cbind(pbinom(y - 1L, size = n, prob = mu), pbinom(y, size = n, prob = mu))
+    },
+    stop("not implemented yet")
+  )
+  return(pr)
+}
+
+pit.negbin <- function(object, ...)
+{
+  ## response and fitted means
+  y <- if(!is.null(object$y)) object$y else model.response(model.frame(object))
+  mu <- fitted(object)
+  
+  ## probabilities from response distribution
+  pr <- cbind(pnbinom(y - 1L, mu = mu, size = object$theta), pnbinom(y, mu = mu, size = object$theta))  
+  return(pr)
+}
+
+pit.zeroinfl <- pit.hurdle <- function(object, ...)
+{
+  ## response
+  y <- if(!is.null(object$y)) object$y else model.response(model.frame(object))
+  n <- length(y)
+  
+  ## corresponding probabilities
+  pr <- predict(object, type = "prob", max = max(y))
+  pr <- cbind(0, t(apply(pr, 1L, cumsum)))
+  pr <- cbind(pr[cbind(1L:n, y + 1L)], pr[cbind(1L:n, y + 2L)])
+  return(pr)
+}
+
+pit.zerotrunc <- function(object, ...)
+{
+  ## response
+  y <- if(!is.null(object$y)) object$y else model.response(model.frame(object))
+  n <- length(y)
+  
+  ## corresponding probabilities
+  pr <- predict(object, type = "prob", max = max(y))
+  pr <- cbind(0, t(apply(pr, 1L, cumsum)))
+  pr <- cbind(pr[cbind(1L:n, y)], pr[cbind(1L:n, y + 1L)])
+  return(pr)
+}
+```
+```{r Count Model Autoplot Function Code}
+###############################################################################
+                    # Count Model Autoplot Function #
+###############################################################################
+
+autoplot.countreg <- function(object, legend.position="left"){
+  
+  ###########
+  # rootogram
+  
+  rootogram.plot <- rootogram(object, style = "hanging", plot = FALSE)
+  
+  g1 <- autoplot(rootogram.plot) +
+    labs(x=all.vars(object$formula)[1], y=expression(sqrt(Frequency)))
+  #labs(x="Counts", y=expression(sqrt(Frequency)))
+  
+  
+  
+  #########
+  # qq plot
+  
+  qres <- qresiduals(object)
+  q2q <- function(y) qnorm(ppoints(length(y)))[order(order(y))]
+  qnor <- q2q(qres)
+  
+  plot.res <- data.frame(theoretical=qnor, residuals=qres)
+  
+  g2 <- ggplot(plot.res, aes(x=theoretical, y=residuals)) +
+    geom_point() +
+    labs(x="Theoretical Quantiles", y="Quantile Residuals") +
+    geom_abline(slope=1, intercept = 0, lty="dashed")
+  
+  
+  
+  ############################
+  # expected and actual counts
+  
+  expected.observed <- rootogram(object, style = "hanging", plot = FALSE)
+  
+  expected.observed <- data.frame(x=rep(expected.observed$x, 2),
+                                  y=c(expected.observed$observed, expected.observed$expected),
+                                  group=factor(c(rep("Observed", length(expected.observed$observed)), rep("Expected", length(expected.observed$expected))), levels=c("Observed", "Expected")))
+  
+  
+  # legend justification and position
+  
+  jus <- c(1, 1)
+  pos <- c(0.95, 0.95)
+  if (legend.position=="left"){
+    jus <- c(0, 1)
+    pos <- c(0.05, 0.95)
+  }
+  
+  g3 <- ggplot(expected.observed[expected.observed$x <= 20, ], aes(x=x, y=y, fill=group)) +
+    geom_col(position = "dodge") +
+    labs(x="Counts", y="Frequency", fill="") +
+    scale_fill_grey() +
+    theme(legend.justification=jus, legend.position=pos, legend.background=element_blank())
+  
+  ####################################
+  # pearson residuals vs fitted values
+  
+  g4 <- ggplot(data.frame(x=object$fitted.values, 
+                          y=residuals(object, type="pearson")), 
+               aes(x=x, y=y)) +
+    geom_point() +
+    labs(x="Fitted Values", y="Pearson Residuals")
+  
+  # combine all plots in one grid
+  
+  gridExtra::grid.arrange(g1, g2, g3, g4)
+  
+}
+
+```
+
+
+
+```{r QOL for ILEN}
+  library(tidyr)
+  library(dplyr)
+
+  # Rename Fecha
+    names(ILEN)[names(ILEN) == "Fecha de Colecta"] <- "Fecha"
+  
+  # Rename hembras
+    names(ILEN)[names(ILEN) == "# Hembras"] <- "Hembras"
+  
+  # Rename hembras
+    names(ILEN)[names(ILEN) == "# Machos"] <- "Machos"
+  
+  # Rename Total mosqs
+    names(ILEN)[names(ILEN) == "# TOTAL"] <- "TotMosq"
+    
+  # Rename Location
+    names(ILEN)[names(ILEN) == "Localidad"] <- "Loc"
+    ILEN$Loc <- as.factor(ILEN$Loc)
+    
+  # Rename Method
+    names(ILEN)[names(ILEN) == "Método"] <- "Met"
+    ILEN$Met <- as.factor(ILEN$Met)
+    
+  # Ensure columns are numeric
+    ILEN$Hembras <- as.numeric(ILEN$Hembras)
+    ILEN$Machos <- as.numeric(ILEN$Machos)
+    ILEN$TotMosq <- as.numeric(ILEN$TotMosq)
+
+  # Merge Genus & Species
+    ILEN$Genspe <- paste(ILEN$Género, ILEN$Especie)
+
+  # Select relevant columns
+    ILEN_selected <- ILEN %>%
+      dplyr::select(Loc, Fecha, Met, Periodo, Genspe, Hembras, Machos, TotMosq)
+  
+  # Create a unique identifier for each row based on date and time
+    ILEN_selected <- ILEN_selected %>%
+      mutate(ID = paste(Loc, Met, Fecha, Periodo, sep = "_"))
+    
+   # Aggregate data to ensure unique combinations of ID and Genspe
+    ILEN_aggregated <- ILEN_selected %>%
+      group_by(ID, Genspe) %>%
+      summarise(
+        Hembras = sum(Hembras, na.rm = TRUE),
+        Machos = sum(Machos, na.rm = TRUE),
+        TotMosq = sum(TotMosq, na.rm = TRUE)
+      ) %>%
+      ungroup()    
+     
+  # Spread the Hembras counts separately for each species
+    ILEN_hembras <- ILEN_aggregated %>%
+      dplyr::select(ID, Genspe, Hembras) %>%
+      spread(key = Genspe, value = Hembras, fill = 0)
+
+  # Spread the Machos counts separately for each species
+    ILEN_machos <- ILEN_aggregated %>%
+      dplyr::select(ID, Genspe, Machos) %>%
+      spread(key = Genspe, value = Machos, fill = 0)
+  
+  # Spread the TotMosq counts separately for each species
+    ILEN_totmosq <- ILEN_aggregated %>%
+      dplyr::select(ID, Genspe, TotMosq) %>%
+      spread(key = Genspe, value = TotMosq, fill = 0)
+  
+  # Combine the separate data frames back into one
+    ILEN_combined <- ILEN_selected %>%
+      dplyr::select(-Genspe, -Hembras, -Machos, -TotMosq) %>%
+      distinct() %>%
+      left_join(ILEN_hembras, by = "ID") %>%
+      left_join(ILEN_machos, by = "ID") %>%
+      left_join(ILEN_totmosq, by = "ID")
+  
+  # Remove the ID column
+  ILEN_combined <- ILEN_combined %>%
+    dplyr::select(-ID)
+  
+  # View the reshaped dataset
+  head(ILEN_combined)
+  
+
+  # Prepare ILEN_combined dataset
+  ILEN_PreMerge <- ILEN_combined %>%
+    
+    # Change Loc values
+    mutate(Loc = case_when(
+      Loc == "Borbón" ~ "B",
+      Loc == "Santa María" ~ "SM",
+      TRUE ~ Loc  # Keep the original value if it doesn't match the conditions
+    )) %>%
+    # Filter observations
+    filter(
+      Met %in% c("HLC", "HDN"),
+      Periodo %in% c("05:00-06:00", "06:00-07:00", "07:00-08:00", 
+                     "11:00-12:00", "12:00-13:00", "13:00-14:00", 
+                     "17:00-18:00", "18:00-19:00", "19:00-20:00")
+    )
+
+
+  
+  # Met as char for both datasets
+    ILE$Met <- as.character(ILE$Met)
+    ILEN_PreMerge$Met <- as.character(ILEN_PreMerge$Met)
+    
+    # Sort the datasets based on the merge variables
+      ILE_sorted <- ILE %>%
+        arrange(Loc, Fecha, Met, Periodo)
+
+      ILEN_PreMerge_sorted <- ILEN_PreMerge %>%
+        arrange(Loc, Fecha, Met, Periodo)
+      
+      # Merge Sorted
+          IXE <- ILE_sorted %>%
+    left_join(ILEN_PreMerge_sorted, by = c("Loc", "Fecha", "Met", "Periodo"))
+      
+          View(IXE)
+  
+######## COMPLETE GENUS/SPECIES COLUMNS CLEANING FIRST
+
+# List of columns to replace NA values with zeroes
+genus_species_columns <- c(
+  "Aedes aegypti.x", "Aedes angustivittatus.x", "Aedes pertinax.x", "Aedes scapularis.x", 
+  "Aedes serratus.x", "Aedes taeniorhynchus.x", "Anopheles albimanus.x", "Anopheles calderoni.x", 
+  "Anopheles cf. apicimacula.x", "Coquillettidia cf. lynchi.x", "Coquillettidia cf. nigricans.x", 
+  "Coquillettidia cf. venezualensis.x", "Coquillettidia cf. venezuelensis.x", "Coquillettidia nigricans.x", 
+  "culex Culex sp. 1.x", "Culex Culex sp. 1.x", "Culex Culex sp. 2.x", "Culex Culex sp. 3.x", 
+  "Culex Culex sp. 4.x", "Culex Culex sp. 5.x", "Culex Culex sp. 6.x", "Culex Culex sp. 7.x", 
+  "Culex ND.x", "Culex nigripalpus.x", "Culex quinquefasciatus.x", "Culex spissipes.x", "Culex vomerifer.x", 
+  "Johnbelkinia cf. ulopus.x", "Johnbelkinia ND.x", "Johnbelkinia sp..x", "Limatus durhamii.x", 
+  "Lutzia Lutzia aff. allostigma.x", "Mansonia cf. amazonensis.x", "Mansonia cf. indubitans.x", 
+  "Mansonia cf. Indubitans.x", "Mansonia cf. pseudotitillans.x", "Mansonia cf. titillans.x", 
+  "Mansonia cf. wilsoni.x", "Mansonia titillans.x", "Psorophora cf. albipes.x", "Psorophora cf. champerico.x", 
+  "Psorophora cf. circumflava.x", "Psorophora circumflava.x", "Psorophora ferox.x", "Psorophora ND.x", 
+  "Psorophora Psorophora aff. howardi.x", "Runchomyia Runchomyia cf. hyperleucus.x", 
+  "Runchomyia Runchomyia sp..x", "Wyeomyia sp.1.x", "Wyeomyia Wyeomyia sp. 1.x", "Wyeomyia Wyeomyia sp. 2.x", 
+  "Aedes aegypti.y", "Aedes angustivittatus.y", "Aedes pertinax.y", "Aedes scapularis.y", "Aedes serratus.y", 
+  "Aedes taeniorhynchus.y", "Anopheles albimanus.y", "Anopheles calderoni.y", "Anopheles cf. apicimacula.y", 
+  "Coquillettidia cf. lynchi.y", "Coquillettidia cf. nigricans.y", "Coquillettidia cf. venezualensis.y", 
+  "Coquillettidia cf. venezuelensis.y", "Coquillettidia nigricans.y", "culex Culex sp. 1.y", "Culex Culex sp. 1.y", 
+  "Culex Culex sp. 2.y", "Culex Culex sp. 3.y", "Culex Culex sp. 4.y", "Culex Culex sp. 5.y", 
+  "Culex Culex sp. 6.y", "Culex Culex sp. 7.y", "Culex ND.y", "Culex nigripalpus.y", "Culex quinquefasciatus.y", 
+  "Culex spissipes.y", "Culex vomerifer.y", "Johnbelkinia cf. ulopus.y", "Johnbelkinia ND.y", 
+  "Johnbelkinia sp..y", "Limatus durhamii.y", "Lutzia Lutzia aff. allostigma.y", "Mansonia cf. amazonensis.y", 
+  "Mansonia cf. indubitans.y", "Mansonia cf. Indubitans.y", "Mansonia cf. pseudotitillans.y", 
+  "Mansonia cf. titillans.y", "Mansonia cf. wilsoni.y", "Mansonia titillans.y", "Psorophora cf. albipes.y", 
+  "Psorophora cf. champerico.y", "Psorophora cf. circumflava.y", "Psorophora circumflava.y", 
+  "Psorophora ferox.y", "Psorophora ND.y", "Psorophora Psorophora aff. howardi.y", 
+  "Runchomyia Runchomyia cf. hyperleucus.y", "Runchomyia Runchomyia sp..y", "Wyeomyia sp.1.y", 
+  "Wyeomyia Wyeomyia sp. 1.y", "Wyeomyia Wyeomyia sp. 2.y", "Aedes aegypti", "Aedes angustivittatus", 
+  "Aedes pertinax", "Aedes scapularis", "Aedes serratus", "Aedes taeniorhynchus", "Anopheles albimanus", 
+  "Anopheles calderoni", "Anopheles cf. apicimacula", "Coquillettidia cf. lynchi", "Coquillettidia cf. nigricans", 
+  "Coquillettidia cf. venezualensis", "Coquillettidia cf. venezuelensis", "Coquillettidia nigricans", 
+  "culex Culex sp. 1", "Culex Culex sp. 1", "Culex Culex sp. 2", "Culex Culex sp. 3", "Culex Culex sp. 4", 
+  "Culex Culex sp. 5", "Culex Culex sp. 6", "Culex Culex sp. 7", "Culex ND", "Culex nigripalpus", 
+  "Culex quinquefasciatus", "Culex spissipes", "Culex vomerifer", "Johnbelkinia cf. ulopus", "Johnbelkinia ND", 
+  "Johnbelkinia sp.", "Limatus durhamii", "Lutzia Lutzia aff. allostigma", "Mansonia cf. amazonensis", 
+  "Mansonia cf. indubitans", "Mansonia cf. Indubitans", "Mansonia cf. pseudotitillans", "Mansonia cf. titillans", 
+  "Mansonia cf. wilsoni", "Mansonia titillans", "Psorophora cf. albipes", "Psorophora cf. champerico", 
+  "Psorophora cf. circumflava", "Psorophora circumflava", "Psorophora ferox", "Psorophora ND", 
+  "Psorophora Psorophora aff. howardi", "Runchomyia Runchomyia cf. hyperleucus", "Runchomyia Runchomyia sp.", 
+  "Wyeomyia sp.1", "Wyeomyia Wyeomyia sp. 1", "Wyeomyia Wyeomyia sp. 2"
+)
+
+# Replace NA values with zeroes in the specified columns
+IXE[genus_species_columns] <- lapply(IXE[genus_species_columns], function(x) {
+  x[is.na(x)] <- 0
+  return(x)
+})
+
+View(IXE)
+```
+
+
+
+```{r Finalizing IXE dataset}
+  # Creation of nicer Aeae & Cxq vars
+    IXE$Aeae <- IXE$`Aedes aegypti.x`
+    IXE$Cxq <- IXE$`Culex quinquefasciatus.x`
+    
+  # Creation of total mosq var
+  IXE$TotMosq <- rowSums(cbind(
+    IXE$`Aedes aegypti`, IXE$`Aedes angustivittatus`, IXE$`Aedes pertinax`, 
+    IXE$`Aedes scapularis`, IXE$`Aedes serratus`, IXE$`Aedes taeniorhynchus`, 
+    IXE$`Anopheles albimanus`, IXE$`Anopheles calderoni`, IXE$`Anopheles cf. apicimacula`, 
+    IXE$`Coquillettidia cf. lynchi`, IXE$`Coquillettidia cf. nigricans`, IXE$`Coquillettidia cf. venezualensis`, 
+    IXE$`Coquillettidia cf. venezuelensis`, IXE$`Coquillettidia nigricans`, IXE$`culex Culex sp. 1`, 
+    IXE$`Culex Culex sp. 1`, IXE$`Culex Culex sp. 2`, IXE$`Culex Culex sp. 3`, IXE$`Culex Culex sp. 4`, 
+    IXE$`Culex Culex sp. 5`, IXE$`Culex Culex sp. 6`, IXE$`Culex Culex sp. 7`, IXE$`Culex ND`, 
+    IXE$`Culex nigripalpus`, IXE$`Culex quinquefasciatus`, IXE$`Culex spissipes`, IXE$`Culex vomerifer`, 
+    IXE$`Johnbelkinia cf. ulopus`, IXE$`Johnbelkinia ND`, IXE$`Johnbelkinia sp.`, IXE$`Limatus durhamii`, 
+    IXE$`Lutzia Lutzia aff. allostigma`, IXE$`Mansonia cf. amazonensis`, IXE$`Mansonia cf. indubitans`, 
+    IXE$`Mansonia cf. Indubitans`, IXE$`Mansonia cf. pseudotitillans`, IXE$`Mansonia cf. titillans`, 
+    IXE$`Mansonia cf. wilsoni`, IXE$`Mansonia titillans`, IXE$`Psorophora cf. albipes`, IXE$`Psorophora cf. champerico`, 
+    IXE$`Psorophora cf. circumflava`, IXE$`Psorophora circumflava`, IXE$`Psorophora ferox`, IXE$`Psorophora ND`, 
+    IXE$`Psorophora Psorophora aff. howardi`, IXE$`Runchomyia Runchomyia cf. hyperleucus`, IXE$`Runchomyia Runchomyia sp.`,     IXE$`Wyeomyia sp.1`, IXE$`Wyeomyia Wyeomyia sp. 1`, IXE$`Wyeomyia Wyeomyia sp. 2`
+  ), na.rm = TRUE)
+  
+  species_columns <- c(
+    "Aedes aegypti", "Aedes angustivittatus", "Aedes pertinax", 
+    "Aedes scapularis", "Aedes serratus", "Aedes taeniorhynchus", 
+    "Anopheles albimanus", "Anopheles calderoni", "Anopheles cf. apicimacula", 
+    "Coquillettidia cf. lynchi", "Coquillettidia cf. nigricans", 
+    "Coquillettidia cf. venezualensis", "Coquillettidia cf. venezuelensis", 
+    "Coquillettidia nigricans", "culex Culex sp. 1", "Culex Culex sp. 1", 
+    "Culex Culex sp. 2", "Culex Culex sp. 3", "Culex Culex sp. 4", 
+    "Culex Culex sp. 5", "Culex Culex sp. 6", "Culex Culex sp. 7", "Culex nigripalpus", "Culex quinquefasciatus", 
+    "Culex spissipes", "Culex vomerifer", "Johnbelkinia cf. ulopus", "Johnbelkinia sp.", "Limatus durhamii", 
+    "Lutzia Lutzia aff. allostigma", "Mansonia cf. amazonensis", 
+    "Mansonia cf. indubitans",  "Mansonia cf. pseudotitillans", "Mansonia cf. titillans", 
+    "Mansonia cf. wilsoni", "Mansonia titillans", "Psorophora cf. albipes", 
+    "Psorophora cf. champerico", "Psorophora circumflava", "Psorophora ferox",  "Psorophora Psorophora aff. howardi", "Runchomyia Runchomyia cf. hyperleucus", 
+    "Runchomyia Runchomyia sp.", "Wyeomyia sp.1",
+    "Wyeomyia Wyeomyia sp. 2"
+  )
+
+
+  # Create a new variable for the number of unique species captured
+  IXE$Diverse <- apply(IXE[species_columns], 1, function(row) sum(row > 0, na.rm = TRUE))
+
+
+  # Create Simpson's Index
+    IXE$Simpson <- apply(IXE[species_columns], 1, function(row) {
+      total_mosquitoes <- sum(row, na.rm = TRUE)
+      if (total_mosquitoes == 0) {
+        return(0)
+      }
+      proportions <- row / total_mosquitoes
+      D <- 1 - sum(proportions^2, na.rm = TRUE)
+      return(D)
+    })
+
+  # Create the new dataset with the specified columns
+    columns_to_keep <- c(
+      "ID", "Loc", "Fecha", "Mes", "Periodo", "Hora", "TimeofDay", "Met", 
+      "MTemp", "MHum", "Vien", "Rain", "Rain3DMA", "Rain7DMA", "Rain14DMA", 
+      "Rain3DSum", "Rain7DSum", "Rain14DSum", "Aeae", "Cxq", "TotMosq", "Diverse", "Simpson"
+    )
+    
+    IXE.Models <- IXE %>%
+      dplyr::select(all_of(columns_to_keep))
+    head(IXE.Models)
+    View(IXE.Models)
+    
+
+```
+
+
+
+
+```{r QOL}
+### Variable Changes & Creation
+
+  ## Char vars as Factors  
+    ILE$Mes <- as.factor(ILE$Mes)
+    ILE$Mes <- relevel(ILE$Mes, ref = "Jun")
+    
+    ILE$Loc <- as.factor(ILE$Loc)
+    ILE$Loc <- relevel(ILE$Loc, ref = "B")
+    
+    ILE$Periodo <- as.factor(ILE$Periodo)
+    ILE$Periodo <- relevel(ILE$Periodo, ref = "13:00-14:00") 
+    
+    ILE$Hora <- as.factor(ILE$Hora)
+    ILE$Hora <- relevel(ILE$Hora, ref = "13")
+    
+    ILE$TimeofDay <- as.factor(ILE$TimeofDay)
+    ILE$TimeofDay <- relevel(ILE$TimeofDay, ref = "Midday")
+    
+    ILE$Met <- as.factor(ILE$Met)
+    ILE$Met <- relevel(ILE$Met, ref = "HLC")
+    
+    ILE$Feb <- as.factor(ILE$Feb)
+    ILE$Jan <- as.factor(ILE$Jan)
+    ILE$Mar <- as.factor(ILE$Mar)
+    ILE$Apr <- as.factor(ILE$Apr)
+    ILE$May <- as.factor(ILE$May)
+    ILE$Jun <- as.factor(ILE$Jun)
+    ILE$Jul_21 <- as.factor(ILE$Jul_21)
+    ILE$Jul_22 <- as.factor(ILE$Jul_22)
+    ILE$Aug <- as.factor(ILE$Aug)
+    ILE$Sep <- as.factor(ILE$Sep)
+    ILE$Oct <- as.factor(ILE$Oct)
+    ILE$Nov <- as.factor(ILE$Nov)
+    ILE$Dec <- as.factor(ILE$Dec)
+   
+
+    # Convert TimeofDay to two-level dichot variables
+      ILE$Morning <- ifelse(ILE$TimeofDay == "Morning", 1, 0)
+      ILE$Midday <- ifelse(ILE$TimeofDay == "Midday", 1, 0)
+      ILE$Evening <- ifelse(ILE$TimeofDay == "Evening", 1, 0)
+
+      table(ILE$TimeofDay, ILE$Morning)
+      
+
+    # Convert Met to two-level dichot variables
+      ILE$HLC <- ifelse(ILE$Met == "HLC", 1, 0)
+      ILE$HDN <- ifelse(ILE$Met == "HDN", 1, 0)
+
+      table(ILE$Met, ILE$HLC, ILE$HDN)
+      
+            
+    # Generate dummy variables for the 'Hora' column
+    # Note: The `remove_first_dummy` argument is set to FALSE to keep all dummy variables
+      ILE <- dummy_cols(ILE, select_columns = "Hora", remove_first_dummy = FALSE)
+    
+    # Optionally, rename columns if needed to match the specific naming convention you want
+      names(ILE) <- gsub("Hora_", "Hora", names(ILE))
+      
+    # Hora as factor
+      ILE$Hora <- as.factor(ILE$Hora)
+
+      
+```
+
+
+
+```{r Predictor Exploration}
+  
+  ##### ILE$MTemp ILE$MHum ILE$Vien ILE$NonAeae ILE$NonCx ILE$NonCxQ
+
+    ##### MTemp | Temperature
+      plot(ILE$MTemp)
+      hist(ILE$MTemp)
+      shapiro.test(ILE$MTemp)
+      ### Result: Not normal.
+
+    ##### MHum | Humidity
+      plot(ILE$MHum)
+      hist(ILE$MHum)
+      shapiro.test(ILE$MHum)
+      ### Result: Not normal.
+
+    ##### Vien | Windspeed
+      plot(ILE$Vien)
+      hist(ILE$Vien)
+      shapiro.test(ILE$Vien)
+      ### Result: Not normal. 
+      
+    #### Rain | Daily Rainfall
+      plot(ILE$Rain)
+      hist(ILE$Rain)
+      shapiro.test(ILE$Rain)
+      ### Result: Not normal. 
+ 
+    #### RainL1 | Last 7 days cumulative rainfall
+      plot(ILE$RainL1)
+      hist(ILE$RainL1)
+      shapiro.test(ILE$RainL1)
+      ### Result: Not normal.      
+      
+    #### RainL2 | Last 14 days cumulative rainfall
+      plot(ILE$RainL2)
+      hist(ILE$RainL2)
+      shapiro.test(ILE$RainL2)
+      ### Result: Not normal.       
+      
+      
+           
+    ##### NonAeae | All non-Aedes aegypti mosqs
+      plot(ILE$NonAeae)
+      hist(ILE$NonAeae)
+      shapiro.test(ILE$NonAeae)
+      ### Result: Not normal.
+
+    ##### NonCx | All non-Cx mosqs
+      plot(ILE$NonCx)
+      hist(ILE$NonCx)
+      shapiro.test(ILE$NonCx)
+      ### Result: Not normal.
+
+    ##### NonCxQ | All non-Cx Quinx mosqs
+      plot(ILE$NonCxQ)
+      hist(ILE$NonCxQ)
+      shapiro.test(ILE$NonCxQ)
+      ### Result: Not normal. 
+      
+      
+  ##### Basic descriptive statistics
+      summary(ILE$CxQ)
+      summary(ILE$MTemp)
+      summary(ILE$MHum)
+      summary(ILE$Vien)
+      sd(ILE$CxQ)
+      sd(ILE$MTemp)
+      sd(ILE$MHum)
+      sd(ILE$Vien)
+```
+
+
+```{r Univariate & Bivariate Analyses for CxQ}
+
+##### Culex quinquefasciatus
+  #### ILE$CxQ
+  
+  #### Distribution Visualizations & Test
+    plot(ILE$CxQ)
+    hist(ILE$CxQ)
+    shapiro.test(ILE$CxQ)
+    ### Result: Dramatically not-normal. Zero-inflated. Without zeroes, roughly negbin.
+        
+  #### Bivariate Examination
+    ### Temperature
+      CxQmedian_temp <- ILE %>%
+        group_by(biCxQ) %>%
+        summarize(Median_Temperature = median(MTemp, na.rm = TRUE))
+      CxQmedian_temp
+      
+      ## Median differences by temp
+      CxQtemp_group_1 <- ILE$MTemp[ILE$biCxQ == 1]
+      CxQtemp_group_0 <- ILE$MTemp[ILE$biCxQ == 0]
+      wilcox_testCxQtemp <- wilcox.test(CxQtemp_group_1, CxQtemp_group_0)
+      wilcox_testCxQtemp
+      
+    ### Humidity
+      CxQmedian_hum <- ILE %>%
+        group_by(biCxQ) %>%
+        summarize(Median_Humidity = median(MHum, na.rm = TRUE))
+      CxQmedian_hum
+      
+      ## Median differences by hum
+      CxQhum_group_1 <- ILE$MHum[ILE$biCxQ == 1]
+      CxQhum_group_0 <- ILE$MHum[ILE$biCxQ == 0]
+      wilcox_testCxQHum <- wilcox.test(CxQhum_group_1, CxQhum_group_0)
+      wilcox_testCxQHum
+
+    ### Wind Speed
+      CxQmedian_vien <- ILE %>%
+        group_by(biCxQ) %>%
+        summarize(Median_Wind = median(Vien, na.rm = TRUE))
+      CxQmedian_vien
+      
+      ## Median differences by vien
+      CxQvien_group_1 <- ILE$Vien[ILE$biCxQ == 1]
+      CxQvien_group_0 <- ILE$Vien[ILE$biCxQ == 0]
+      wilcox_testCxQVien <- wilcox.test(CxQvien_group_1, CxQvien_group_0)
+      wilcox_testCxQVien
+      
+      
+```
+
+
+```{r Bivariate Analyses Wilcoxon Tests for Env Vars}
+
+  #### Summaries
+  summary(ILE$MTemp)
+  summary(ILE$MHum)
+  summary(ILE$Vien)
+  summary(ILE$Rain)
+
+  
+  ##### Temperature
+    wilcox.test(ILE$MTemp ~ ILE$Loc)
+    wilcox.test(ILE$MTemp ~ ILE$Met)
+    median_MTemp_B <- aggregate(MTemp ~ Loc, data = ILE[ILE$Loc == "B", ], median)
+    median_MTemp_SM <- aggregate(MTemp ~ Loc, data = ILE[ILE$Loc == "SM", ], median)
+    median_MTemp_HDN <- aggregate(MTemp ~ Met, data = ILE[ILE$Met == "HDN", ], median)
+    median_MTemp_HLC <- aggregate(MTemp ~ Met, data = ILE[ILE$Met == "HLC", ], median)
+    mean_MTemp_B <- aggregate(MTemp ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+    mean_MTemp_SM <- aggregate(MTemp ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+    mean_MTemp_HDN <- aggregate(MTemp ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+    mean_MTemp_HLC <- aggregate(MTemp ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+    median_MTemp_B
+    median_MTemp_SM
+    median_MTemp_HDN
+    median_MTemp_HLC
+    mean_MTemp_B
+    mean_MTemp_SM
+    mean_MTemp_HDN
+    mean_MTemp_HLC
+
+  ##### Humidity
+    wilcox.test(ILE$MHum ~ ILE$Loc)
+    wilcox.test(ILE$MHum ~ ILE$Met)
+    median_MHum_B <- aggregate(MHum ~ Loc, data = ILE[ILE$Loc == "B", ], median)
+    median_MHum_SM <- aggregate(MHum ~ Loc, data = ILE[ILE$Loc == "SM", ], median)
+    median_MHum_HDN <- aggregate(MHum ~ Met, data = ILE[ILE$Met == "HDN", ], median)
+    median_MHum_HLC <- aggregate(MHum ~ Met, data = ILE[ILE$Met == "HLC", ], median)
+    mean_MHum_B <- aggregate(MHum ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+    mean_MHum_SM <- aggregate(MHum ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+    mean_MHum_HDN <- aggregate(MHum ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+    mean_MHum_HLC <- aggregate(MHum ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+    median_MHum_B
+    median_MHum_SM
+    median_MHum_HDN
+    median_MHum_HLC
+    mean_MHum_B
+    mean_MHum_SM
+    mean_MHum_HDN
+    mean_MHum_HLC
+
+  ##### Wind
+    wilcox.test(ILE$Vien ~ ILE$Loc)
+    wilcox.test(ILE$Vien ~ ILE$Met)
+    median_Vien_B <- aggregate(Vien ~ Loc, data = ILE[ILE$Loc == "B", ], median)
+    median_Vien_SM <- aggregate(Vien ~ Loc, data = ILE[ILE$Loc == "SM", ], median)
+    median_Vien_HDN <- aggregate(Vien ~ Met, data = ILE[ILE$Met == "HDN", ], median)
+    median_Vien_HLC <- aggregate(Vien ~ Met, data = ILE[ILE$Met == "HLC", ], median)
+    mean_Vien_B <- aggregate(Vien ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+    mean_Vien_SM <- aggregate(Vien ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+    mean_Vien_HDN <- aggregate(Vien ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+    mean_Vien_HLC <- aggregate(Vien ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+    median_Vien_B
+    median_Vien_SM     
+    median_Vien_HDN
+    median_Vien_HLC
+    mean_Vien_B
+    mean_Vien_SM     
+    mean_Vien_HDN
+    mean_Vien_HLC
+    
+  ##### Rain
+    wilcox.test(ILE$Rain ~ ILE$Loc)
+    median_Rain_B <- aggregate(Rain ~ Loc, data = ILE[ILE$Loc == "B", ], median)
+    median_Rain_SM <- aggregate(Rain ~ Loc, data = ILE[ILE$Loc == "SM", ], median)
+    mean_Rain_B <- aggregate(Rain ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+    mean_Rain_SM <- aggregate(Rain ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+    median_Rain_B
+    median_Rain_SM
+    mean_Rain_B
+    mean_Rain_SM 
+
+  ##### CxQ
+      ### Location
+      wilcox.test(ILE$CxQ ~ ILE$Loc)
+      sum_CxQ_B <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "B", ], sum)
+      mean_CxQ_B <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+      sum_CxQ_SM <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "SM", ], sum)
+      mean_CxQ_SM <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+      sum_CxQ_B
+      sum_CxQ_SM
+      mean_CxQ_B
+      mean_CxQ_SM
+  
+      ### Method
+      wilcox.test(ILE$CxQ ~ ILE$Met)
+      sum_CxQ_HDN <- aggregate(CxQ ~ Met, data = ILE[ILE$Met == "HDN", ], sum)
+      mean_CxQ_HDN <- aggregate(CxQ ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+      sum_CxQ_HLC <- aggregate(CxQ ~ Met, data = ILE[ILE$Met == "HLC", ], sum)
+      mean_CxQ_HLC <- aggregate(CxQ ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+      sum_CxQ_HDN
+      sum_CxQ_HLC
+      mean_CxQ_HDN
+      mean_CxQ_HLC
+
+      ### Location
+      wilcox.test(ILE$CxQ ~ ILE$Loc)
+      sum_CxQ_B <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "B", ], sum)
+      mean_CxQ_B <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+      sum_CxQ_SM <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "SM", ], sum)
+      mean_CxQ_SM <- aggregate(CxQ ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+      sum_CxQ_B
+      sum_CxQ_SM
+      mean_CxQ_B
+      mean_CxQ_SM
+
+  ##### No_individuos 
+      ### Method
+      wilcox.test(ILE$No_individuos ~ ILE$Met)
+      sum_tot_HDN <- aggregate(No_individuos ~ Met, data = ILE[ILE$Met == "HDN", ], sum)
+      mean_tot_HDN <- aggregate(No_individuos ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+      sum_tot_HLC <- aggregate(No_individuos ~ Met, data = ILE[ILE$Met == "HLC", ], sum)
+      mean_tot_HLC <- aggregate(No_individuos ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+      sum_tot_HDN
+      sum_tot_HLC
+      mean_tot_HDN
+      mean_tot_HLC 
+  
+      ### Location
+      wilcox.test(ILE$No_individuos ~ ILE$Loc)
+      sum_tot_B <- aggregate(No_individuos ~ Loc, data = ILE[ILE$Loc == "B", ], sum)
+      mean_tot_B <- aggregate(No_individuos ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+      sum_tot_SM <- aggregate(No_individuos ~ Loc, data = ILE[ILE$Loc == "SM", ], sum)
+      mean_tot_SM <- aggregate(No_individuos ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+      sum_tot_B
+      sum_tot_SM
+      mean_tot_B
+      mean_tot_SM
+      
+  ##### Aeae 
+      ### Method
+      wilcox.test(ILE$Aeae ~ ILE$Met)
+      sum_Aeae_HDN <- aggregate(Aeae ~ Met, data = ILE[ILE$Met == "HDN", ], sum)
+      mean_Aeae_HDN <- aggregate(Aeae ~ Met, data = ILE[ILE$Met == "HDN", ], mean)
+      sum_Aeae_HLC <- aggregate(Aeae ~ Met, data = ILE[ILE$Met == "HLC", ], sum)
+      mean_Aeae_HLC <- aggregate(Aeae ~ Met, data = ILE[ILE$Met == "HLC", ], mean)
+      sum_Aeae_HDN
+      sum_Aeae_HLC
+      mean_Aeae_HDN
+      mean_Aeae_HLC 
+  
+      ### Location
+      wilcox.test(ILE$Aeae ~ ILE$Loc)
+      sum_Aeae_B <- aggregate(Aeae ~ Loc, data = ILE[ILE$Loc == "B", ], sum)
+      mean_Aeae_B <- aggregate(Aeae ~ Loc, data = ILE[ILE$Loc == "B", ], mean)
+      sum_Aeae_SM <- aggregate(Aeae ~ Loc, data = ILE[ILE$Loc == "SM", ], sum)
+      mean_Aeae_SM <- aggregate(Aeae ~ Loc, data = ILE[ILE$Loc == "SM", ], mean)
+      sum_Aeae_B
+      sum_Aeae_SM
+      mean_Aeae_B
+      mean_Aeae_SM
+```
+
+
+```{r Dunn, KW & Wilcoxon Tests for Cat variables}
+  #### Kruskal-Wallis & Dunn Tests
+    
+    ### Month
+      ## Temp
+        dunn.test(ILE$MTemp, g = ILE$Mes)
+  
+      ## Humidity
+        dunn.test(ILE$MHum, g = ILE$Mes)
+        
+      ## Windspeed
+        dunn.test(ILE$Vien, g = ILE$Mes)
+
+      ## Some level of association for all three variables across the months.
+
+
+                                
+    ### Hour
+      ## Temp
+        dunn.test(ILE$MTemp, g = ILE$Periodo)
+        
+      ## Humidity
+        dunn.test(ILE$MHum, g = ILE$Periodo)
+        
+      ## Windspeed
+        dunn.test(ILE$Vien, g = ILE$Periodo)        
+
+      ## Some level of association for all three variables across the hours.
+
+        
+        
+    ### Period of Day
+      ## Temp
+        dunn.test(ILE$MTemp, g = ILE$TimeofDay)
+        
+      ## Humidity
+        dunn.test(ILE$MHum, g = ILE$TimeofDay)
+        
+      ## Windspeed
+        dunn.test(ILE$Vien, g = ILE$TimeofDay)        
+
+      ## Every period is statistically different for all three vars.
+
+         
+
+  #### Wilcoxon Rank-Sum Tests        
+                
+    ### Location
+      ## Temp
+        wilcox.test(ILE$MTemp ~ ILE$Loc)
+        
+      ## Humidity
+        wilcox.test(ILE$MHum ~ ILE$Loc)
+        
+      ## Windspeed
+        wilcox.test(ILE$Vien ~ ILE$Loc)
+
+      ## Both locations are statistically different for all three vars.        
+        
+ 
+               
+    ### Method
+      ## Temp
+        wilcox.test(ILE$MTemp ~ ILE$Met)
+        
+      ## Humidity
+        wilcox.test(ILE$MHum ~ ILE$Met)
+        
+      ## Windspeed
+        wilcox.test(ILE$Vien ~ ILE$Met) 
+
+      ## All three vars do not statistically differ by method.
+```
+
+
+```{r Wilcx Tests for CxQ & Ae aegypti}
+  ##### Aeae 
+      ### Temp
+      wilcox.test(ILE$MTemp ~ ILE$biAeae)
+      mean_MTemp_Aeae <- aggregate(MTemp ~ biAeae, data = ILE, mean)
+      median_MTemp_Aeae <- aggregate(MTemp ~ biAeae, data = ILE, median)
+      mean_MTemp_Aeae
+      median_MTemp_Aeae
+ 
+      ### Humidity
+      wilcox.test(ILE$MHum ~ ILE$biAeae)
+      mean_MHum_Aeae <- aggregate(MHum ~ biAeae, data = ILE, mean)
+      median_MHum_Aeae <- aggregate(MHum ~ biAeae, data = ILE, median)
+      mean_MHum_Aeae
+      median_MHum_Aeae
+      
+      ### Vien
+      wilcox.test(ILE$Vien ~ ILE$biAeae)
+      mean_Vien_Aeae <- aggregate(Vien ~ biAeae, data = ILE, mean)
+      median_Vien_Aeae <- aggregate(Vien ~ biAeae, data = ILE, median)
+      mean_Vien_Aeae
+      median_Vien_Aeae
+      
+      ### Rain
+      wilcox.test(ILE$Rain ~ ILE$biAeae)
+      mean_Rain_Aeae <- aggregate(Rain ~ biAeae, data = ILE, mean)
+      median_Rain_Aeae <- aggregate(Rain ~ biAeae, data = ILE, median)
+      mean_Rain_Aeae
+      median_Rain_Aeae
+      
+  ##### CxQ 
+      ### Temp
+      wilcox.test(ILE$MTemp ~ ILE$biCxQ)
+      mean_MTemp_CxQ <- aggregate(MTemp ~ biCxQ, data = ILE, mean)
+      median_MTemp_CxQ <- aggregate(MTemp ~ biCxQ, data = ILE, median)
+      mean_MTemp_CxQ
+      median_MTemp_CxQ
+ 
+      ### Humidity
+      wilcox.test(ILE$MHum ~ ILE$biCxQ)
+      mean_MHum_CxQ <- aggregate(MHum ~ biCxQ, data = ILE, mean)
+      median_MHum_CxQ <- aggregate(MHum ~ biCxQ, data = ILE, median)
+      mean_MHum_CxQ
+      median_MHum_CxQ
+      
+      ### Vien
+      wilcox.test(ILE$Vien ~ ILE$biCxQ)
+      mean_Vien_CxQ <- aggregate(Vien ~ biCxQ, data = ILE, mean)
+      median_Vien_CxQ <- aggregate(Vien ~ biCxQ, data = ILE, median)
+      mean_Vien_CxQ
+      median_Vien_CxQ
+      
+      ### Rain
+      wilcox.test(ILE$Rain ~ ILE$biCxQ)
+      mean_Rain_CxQ <- aggregate(Rain ~ biCxQ, data = ILE, mean)
+      median_Rain_CxQ <- aggregate(Rain ~ biCxQ, data = ILE, median)
+      mean_Rain_CxQ
+      median_Rain_CxQ
+
+
+
+```
+
+
+```{r Predictor Bivariate Models - Collinearity Examination}
+
+  ##### Env Predictor Models
+
+    #### Temp by Humidity
+    TempHumModel <-  glm(ILE$MTemp ~ ILE$MHum)
+    summary(TempHumModel)
+    autoplot(TempHumModel)
+      ### Not a great model, but highly significant.
+    
+    #### Temp by Wind Speed
+    TempVienModel <-  glm(ILE$MTemp ~ ILE$Vien)
+    summary(TempVienModel)
+    autoplot(TempVienModel)
+      ### Terrible model. Not significant.
+    
+    #### Humidity by Wind Speed
+    HumVienModel <-  glm(ILE$MHum ~ ILE$Vien)
+    summary(HumVienModel)
+    autoplot(HumVienModel)
+      ### Another bad model. Not significant.
+    
+  ##### Environmental by Mes
+    
+    #### Temp by Month
+    TempMesModel <-  glm(ILE$MTemp ~ ILE$Mes)
+    summary(TempMesModel)
+    autoplot(TempMesModel)
+      ### Highly correlated.
+    
+    #### Humidity by Month
+    HumMesModel <-  glm(ILE$MHum ~ ILE$Mes)
+    summary(HumMesModel)
+    autoplot(HumMesModel)
+      ### Two months are correlated. Might not have collinearity issues.
+
+    #### Windspeed by Month
+    VienMesModel <-  glm(ILE$Vien ~ ILE$Mes)
+    summary(VienMesModel)
+    autoplot(VienMesModel)
+      ### One month is correlated.
+    
+    
+  ##### Environmental by Periodo
+    
+    #### Temp by Periodo
+    TempPeriodoModel <-  glm(ILE$MTemp ~ ILE$Periodo)
+    summary(TempPeriodoModel)
+    autoplot(TempPeriodoModel)
+      ### Highly significant.
+    
+    #### Humidity by Periodo
+    HumPeriodoModel <-  glm(ILE$MHum ~ ILE$Periodo)
+    summary(HumPeriodoModel)
+    autoplot(HumPeriodoModel)
+      ### Highly significant.
+
+    #### Windspeed by Periodo
+    VienPeriodoModel <-  glm(ILE$Vien ~ ILE$Periodo)
+    summary(VienPeriodoModel)
+    autoplot(VienPeriodoModel)
+      ### Weakly significant.
+    
+    
+  ##### Environmental by Location
+    
+    #### Temp by Loc
+    TempLocModel <-  glm(ILE$MTemp ~ ILE$Loc)
+    summary(TempLocModel)
+    autoplot(TempLocModel)
+      ### Highly significant.
+    
+    #### Humidity by Loc
+    HumLocModel <-  glm(ILE$MHum ~ ILE$Loc)
+    summary(HumLocModel)
+    autoplot(HumLocModel)
+      ### Weakly significant.
+
+    #### Windspeed by Loc
+    VienLocModel <-  glm(ILE$Vien ~ ILE$Loc)
+    summary(VienLocModel)
+    autoplot(VienLocModel)
+      ### Highly significant.
+```
+
+
+```{r Model Fit Assessment for CxQ ~ MTemp}
+
+    #### Bivariate Temp & CxQ Model ~ OLS
+    CxQTempOLSModel <-  glm(ILE$CxQ ~ ILE$MTemp)
+    summary(CxQTempOLSModel)
+    autoplot(CxQTempOLSModel)
+      ### Ugly residual plots.
+      ### AIC: 15857
+      ### ILE$MTemp Beta= -0.4201, p = 0.00273 **
+
+    #### Bivariate Temp & CxQ Model ~ Poisson
+    CxQTempPoissonModel <-  glm(ILE$CxQ ~ ILE$MTemp, family = "poisson")
+    summary(CxQTempPoissonModel)
+    autoplot(CxQTempPoissonModel)
+      ### Ugly residual plots.
+      ### AIC: 30495
+      ### ILE$MTemp Beta= -0.173209, p < 2e-16 ***
+
+    #### Bivariate Temp & CxQ Model ~ Zero-inflated Poisson
+    CxQTempZpoissonModel <-  zeroinfl(ILE$CxQ ~ ILE$MTemp | ILE$MTemp, dist = "poisson")
+    summary(CxQTempZpoissonModel)
+    AIC(CxQTempZpoissonModel)
+    CxQTempZpoissonModelresids <- residuals(CxQTempZpoissonModel)
+      plot(CxQTempZpoissonModelresids)
+      ### Ugly residual plots.
+      ### AIC: 16374.19
+      ### ILE$MTemp Beta= -0.035372, p = 4.5e-06 ***
+    
+    #### Bivariate Temp & CxQ Model ~ Negative binomial
+    CxQTempNegbinModel <-  glm.nb(ILE$CxQ ~ ILE$MTemp)
+    summary(CxQTempNegbinModel)
+    autoplot(CxQTempNegbinModel)
+      ### Ugly residual plots.
+      ### AIC: 4877.7
+      ### ILE$MTemp Beta= -0.35112, p < 2e-16 ***    
+    
+    #### Bivariate Temp & CxQ Model ~ Zero-inflated Negative binomial
+    CxQTempZNegbinModel <-  zeroinfl(ILE$CxQ ~ ILE$MTemp | ILE$MTemp, dist = "negbin")
+    summary(CxQTempZNegbinModel)
+    AIC(CxQTempZNegbinModel)
+    CxQTempZNegbinModelresids <- residuals(CxQTempZNegbinModel)
+      plot(CxQTempZNegbinModelresids)
+      ### Model output is not provided due to design matrix being not invertible.
+      ### AIC: 4881.66
+      
+    #### Bivariate Temp & CxQ Model ~ Hurdle poisson
+    CxQTempHurdlePoisModel <-  hurdle(ILE$CxQ ~ ILE$MTemp | ILE$MTemp, dist = "poisson")
+    summary(CxQTempHurdlePoisModel)
+    AIC(CxQTempHurdlePoisModel)
+    CxQTempHurdlePoisModelresids <- residuals(CxQTempHurdlePoisModel)
+      plot(CxQTempHurdlePoisModelresids)
+      ### AIC: 16374.19
+      ### ILE$MTemp | Count Model Beta= -0.035372, p = 4.5e-06 ***
+      ### ILE$MTemp | Zero Hurdle Model Beta= -0.18966, p = 1.46e-13 ***
+
+    #### Bivariate Temp & CxQ Model ~ Hurdle negbin
+    CxQTempHurdlenbModel <-  hurdle(ILE$CxQ ~ ILE$MTemp | ILE$MTemp, dist = "negbin")
+    summary(CxQTempHurdlenbModel)
+    AIC(CxQTempHurdlenbModel)
+    autoplot.countreg(CxQTempHurdlenbModel)
+      ### AIC: 4854.346
+      ### ILE$MTemp | Count Model Beta= -0.096822, p = 0.271
+      ### ILE$MTemp | Zero Hurdle Model Beta= -0.18966, p = 1.46e-13 ***
+      
+      
+```
+
+
+```{r Preliminary Bivariate Models for CxQ}
+
+
+    CxQTempModel <-  glm.nb(CxQ ~ MTemp, data = ILE)
+    summary(CxQTempModel)
+    confint(CxQTempModel)
+    autoplot(CxQTempModel)
+
+    CxQHumModel <-  glm.nb(CxQ ~ MHum, data = ILE)
+    summary(CxQHumModel)
+    confint(CxQHumModel)
+    autoplot(CxQHumModel)
+
+    CxQVienModel <-  glm.nb(ILE$CxQ ~ ILE$Vien)
+    summary(CxQVienModel)
+    confint(CxQVienModel)
+    autoplot(CxQVienModel)
+
+        CxQVienModel <-  glm(biCxQ ~ Vien, data = ILE, family = "binomial")
+        summary(CxQVienModel)
+        confint(CxQVienModel)
+        autoplot(CxQVienModel)
+    
+    CxQMetModel <-  glm.nb(CxQ ~ Met, data = ILE)
+    summary(CxQMetModel)
+    confint(CxQMetModel)
+    autoplot(CxQMetModel) 
+    
+    CxQLocModel <-  glm.nb(CxQ ~ Loc, data = ILE)
+    summary(CxQLocModel)
+    confint(CxQLocModel)
+    autoplot(CxQLocModel)   
+    
+    CxQTimeofDayModel <-  glm.nb(CxQ ~ TimeofDay, data = ILE)
+    summary(CxQTimeofDayModel)
+    confint(CxQTimeofDayModel)
+    autoplot(CxQTimeofDayModel)
+
+    CxQMesModel <-  glm.nb(CxQ ~ Mes, data = ILE)
+    summary(CxQMesModel)
+    confint(CxQMesModel)
+    autoplot(CxQMesModel)
+
+```
+
+
+```{r Reverse Stepwise Regression using Negative binomial Models for CxQ}
+
+  ##### Initial Model for CxQ
+    CxQModelA <-  glm.nb(CxQ ~ MTemp + MHum + Vien + Met + Loc + TimeofDay + Mes, data = ILE)
+    summary(CxQModelA)
+    confint(CxQModelA)
+    vif(CxQModelA)
+    autoplot(CxQModelA)
+    
+  ##### Due to high VIFs for Temp & Hum added interaction term - not significant
+    CxQModelA.1 <-  glm.nb(CxQ ~ MTemp*MHum + Vien + Met + Loc + TimeofDay + Mes, data = ILE)
+    summary(CxQModelA.1)
+    confint(CxQModelA.1)
+    vif(CxQModelA.1)
+    autoplot(CxQModelA.1)
+    
+  ##### Model w/o MTemp
+    CxQModelB <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Mes, data = ILE)
+    summary(CxQModelB)
+    confint(CxQModelB)
+    vif(CxQModelB)
+    autoplot(CxQModelB)
+
+  ##### Model w/o MTemp
+    CxQModelB.1 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Jun + Jul + Aug + Sep + Oct + Nov + Dec + Jan + Feb + Mar + Apr + May, data = ILE)
+    summary(CxQModelB.1)
+    confint(CxQModelB.1)
+
+    autoplot(CxQModelB.1)
+    
+    AIC(CxQModelB, CxQModelB.1)
+
+  ##### Model w/o May    
+    CxQModelB2 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Jun + Jul + Aug + Sep + Oct + Nov + Dec + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelB2)
+    confint(CxQModelB2)
+    vif(CxQModelB2)
+    autoplot(CxQModelB2)
+             
+  ##### Model w/o May & Nov
+    CxQModelC <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Jun + Jul + Aug + Sep + Oct + Dec + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelC)
+    confint(CxQModelC)
+    vif(CxQModelC)
+    autoplot(CxQModelC)
+
+  ##### Model w/o May & Nov & June    
+      CxQModelC1 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Jul + Aug + Sep + Oct + Dec + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelC1)
+    confint(CxQModelC1)
+    vif(CxQModelC1)
+    autoplot(CxQModelC1)
+    
+  ##### Model w/o Jun, July, May or Nov    
+    CxQModelD <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Dec + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelD)
+    confint(CxQModelD)
+    vif(CxQModelD)
+    autoplot(CxQModelD)
+     
+  ##### Model w/o Jun, July, May, Nov, Dec    
+    CxQModelE <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelE)
+    confint(CxQModelE)
+    vif(CxQModelE)
+    autoplot(CxQModelE)
+       
+    AIC(CxQModelB, CxQModelC, CxQModelD, CxQModelE)
+    
+  ##### Model w/o Wind   
+    CxQModelF <-  glm.nb(CxQ ~ MHum + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelF)
+    confint(CxQModelF)
+    vif(CxQModelF)
+    autoplot(CxQModelF)
+       
+    AIC(CxQModelB, CxQModelC, CxQModelD, CxQModelE, CxQModelF)
+
+  ##### Model with Temp instead of Hum        
+    CxQModelG <-  glm.nb(CxQ ~ MTemp + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModelG)
+    confint(CxQModelG)
+    vif(CxQModelG)
+    autoplot(CxQModelG)
+    AIC(CxQModelE, CxQModelG)
+      #### Humidity Model has lower AIC (4082 v. 4095)
+    
+  ##### Final Model        
+    SemifinalCxQModel <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    SemifinalCxQModel
+    summary(SemifinalCxQModel)
+    confint(SemifinalCxQModel)
+    vif(SemifinalCxQModel)
+    autoplot(SemifinalCxQModel)
+      #### Additional Model fit parameters
+        ### McFadden's pseudo-R squared
+          CxQModelpseudo_R_squared <- 1 - (CxQModel$deviance / CxQModel$null.deviance)
+          cat("McFadden's Pseudo-R Squared:", CxQModelpseudo_R_squared, "\n")
+
+
+  AIC(CxQModelA, CxQModelB, CxQModelB2, CxQModelC, CxQModelC1, CxQModelD, CxQModelE)                    
+```
+
+
+```{r Final Negbin Model with Temp Interaction Terms for CxQ}
+
+##### Final Model
+  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+
+  ##### MTemp
+      CxQIntA1 <-  glm.nb(CxQ ~ MHum*MTemp + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA1)
+      confint(CxQIntA1)
+      autoplot(CxQIntA1)
+      vif(CxQIntA1)
+  
+      CxQIntA2 <-  glm.nb(CxQ ~ MHum + Vien*MTemp + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA2)
+      confint(CxQIntA2)
+      autoplot(CxQIntA2)
+      vif(CxQIntA2)
+      
+      CxQIntA3 <-  glm.nb(CxQ ~ MHum + Vien + Met*MTemp + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA3)
+      confint(CxQIntA3)
+      autoplot(CxQIntA3)
+      vif(CxQIntA3)
+
+      CxQIntA4 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc*MTemp + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA4)
+      confint(CxQIntA4)
+      autoplot(CxQIntA4)
+      vif(CxQIntA4)
+  
+      CxQIntA5 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay*MTemp + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA5)
+      confint(CxQIntA5)
+      autoplot(CxQIntA5)
+      vif(CxQIntA4)
+      
+      CxQIntA6 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug*MTemp + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA6)
+      confint(CxQIntA6)
+      autoplot(CxQIntA6)
+      vif(CxQIntA6)
+      
+      CxQIntA7 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep*MTemp + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA7)
+      confint(CxQIntA7)
+      autoplot(CxQIntA7)
+      vif(CxQIntA7)
+  
+      CxQIntA8 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct*MTemp + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA8)
+      confint(CxQIntA8)
+      autoplot(CxQIntA8)
+      vif(CxQIntA8)
+      
+      CxQIntA9 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan*MTemp + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntA9)
+      confint(CxQIntA9)
+      autoplot(CxQIntA9)
+      vif(CxQIntA9)
+      
+      
+      CxQIntA10 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb*MTemp + Mar + Apr, data = ILE)
+      summary(CxQIntA10)
+      confint(CxQIntA10)
+      autoplot(CxQIntA10)
+      vif(CxQIntA10)
+  
+      CxQIntA11 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar*MTemp + Apr, data = ILE)
+      summary(CxQIntA11)
+      confint(CxQIntA11)
+      autoplot(CxQIntA11)
+      vif(CxQIntA11)
+      
+      CxQIntA12 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr*MTemp, data = ILE)
+      summary(CxQIntA12)
+      confint(CxQIntA12)
+      autoplot(CxQIntA12)
+      vif(CxQIntA12)
+      
+  ##### Significant variables: Vien:MTemp, MetHLC:MTemp, Aug:MTemp, MTemp:Sept
+```
+
+```{r Final Negbin Model with Hum Interaction Terms for CxQ}
+
+
+##### Final Model
+  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+
+  ##### MHum
+      CxQIntB1 <-  glm.nb(CxQ ~ MHum*MTemp + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB1)
+      confint(CxQIntB1)
+      autoplot(CxQIntB1)
+      vif(CxQIntB1)
+  
+      CxQIntB2 <-  glm.nb(CxQ ~ MHum + Vien*MHum + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB2)
+      confint(CxQIntB2)
+      autoplot(CxQIntB2)
+      vif(CxQIntB2)
+      
+      CxQIntB3 <-  glm.nb(CxQ ~ MHum + Vien + Met*MHum + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB3)
+      confint(CxQIntB3)
+      autoplot(CxQIntB3)
+      vif(CxQIntB3)
+
+      CxQIntB4 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc*MHum + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB4)
+      confint(CxQIntB4)
+      autoplot(CxQIntB4)
+      vif(CxQIntB4)
+  
+      CxQIntB5 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay*MHum + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB5)
+      confint(CxQIntB5)
+      autoplot(CxQIntB5)
+      vif(CxQIntB4)
+      
+      CxQIntB6 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug*MHum + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB6)
+      confint(CxQIntB6)
+      autoplot(CxQIntB6)
+      vif(CxQIntB6)
+      
+      CxQIntB7 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep*MHum + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB7)
+      confint(CxQIntB7)
+      autoplot(CxQIntB7)
+      vif(CxQIntB7)
+  
+      CxQIntB8 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct*MHum + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB8)
+      confint(CxQIntB8)
+      autoplot(CxQIntB8)
+      vif(CxQIntB8)
+      
+      CxQIntB9 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan*MHum + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntB9)
+      confint(CxQIntB9)
+      autoplot(CxQIntB9)
+      vif(CxQIntB9)
+      
+      CxQIntB10 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb*MHum + Mar + Apr, data = ILE)
+      summary(CxQIntB10)
+      confint(CxQIntB10)
+      autoplot(CxQIntB10)
+      vif(CxQIntB10)
+      
+      CxQIntB11 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar*MHum + Apr, data = ILE)
+      summary(CxQIntB11)
+      confint(CxQIntB11)
+      autoplot(CxQIntB11)
+      vif(CxQIntB11)
+      
+      CxQIntB12 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr*MHum, data = ILE)
+      summary(CxQIntB12)
+      confint(CxQIntB12)
+      autoplot(CxQIntB12)
+      vif(CxQIntB12)
+      
+  ##### Significant variables: Vien:MTemp, MetHLC:MTemp, Aug:MTemp, MTemp:Sept
+```
+
+```{r Final Negbin Model with Vien Interaction Terms for CxQ}
+
+
+##### Final Model
+  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+
+  ##### Vien
+      CxQIntC1 <-  glm.nb(CxQ ~ MHum*Vien + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC1)
+      confint(CxQIntC1)
+      autoplot(CxQIntC1)
+      vif(CxQIntC1)
+      
+      CxQIntC3 <-  glm.nb(CxQ ~ MHum + Vien + Met*Vien + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC3)
+      confint(CxQIntC3)
+      autoplot(CxQIntC3)
+      vif(CxQIntC3)
+
+      CxQIntC4 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc*Vien + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC4)
+      confint(CxQIntC4)
+      autoplot(CxQIntC4)
+      vif(CxQIntC4)
+  
+      CxQIntC5 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay*Vien + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC5)
+      confint(CxQIntC5)
+      autoplot(CxQIntC5)
+      vif(CxQIntC5)
+      
+      CxQIntC6 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug*Vien + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC6)
+      confint(CxQIntC6)
+      autoplot(CxQIntC6)
+      vif(CxQIntC6)
+      
+      CxQIntC7 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep*Vien + Oct + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC7)
+
+      autoplot(CxQIntC7)
+      vif(CxQIntC7)
+  
+      CxQIntC8 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct*Vien + Jan + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC8)
+      confint(CxQIntC8)
+      autoplot(CxQIntC8)
+      vif(CxQIntC8)
+      
+      CxQIntC9 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan*Vien + Feb + Mar + Apr, data = ILE)
+      summary(CxQIntC9)
+      confint(CxQIntC9)
+      autoplot(CxQIntC9)
+      vif(CxQIntC9)
+      
+      CxQIntC10 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb*Vien + Mar + Apr, data = ILE)
+      summary(CxQIntC10)
+      confint(CxQIntC10)
+      autoplot(CxQIntC10)
+      vif(CxQIntC10)
+      
+      CxQIntC11 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar*Vien + Apr, data = ILE)
+      summary(CxQIntC11)
+
+      autoplot(CxQIntC11)
+      vif(CxQIntC11)
+      
+      CxQIntC12 <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr*Vien, data = ILE)
+      summary(CxQIntC12)
+
+      autoplot(CxQIntC12)
+      vif(CxQIntC12)
+      
+  ##### Significant variables: Vien:MTemp, MetHLC:MTemp, Aug:MTemp, MTemp:Sept
+```
+
+```{r Attempts to sort out Final Negbin Model w/ interaction terms}
+
+    ##### Semifinal Model
+    SemifinalCxQModel <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    SemifinalCxQModel
+    summary(SemifinalCxQModel)
+    ## AIC:4082.467
+
+        #### Addition of Vien:MTemp   
+      Int1 <- glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr + Vien:MTemp, data = ILE)
+          summary(Int1)
+          autoplot(Int1)
+          vif(Int1)
+          AIC(SemifinalCxQModel, Int1)
+            ## High VIF; will remove Vien
+            ## AIC: 4075.564
+    
+        #### Addition of Vien:MTemp w/ removal of Vien  
+      Int1.1 <- glm.nb(CxQ ~ MHum + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr + Vien:MTemp, data = ILE)
+          summary(Int1.1)
+          autoplot(Int1.1)
+          vif(Int1.1)
+          AIC(SemifinalCxQModel, Int1, Int1.1)
+            ## VIF normalized
+            ## AIC: 4082.174      
+
+    ##### Will not include Vien:MTemp - no major improvement in AIC & worsens interpretability.
+                
+        #### Addition of Vien:MHum 
+      Int2 <- glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr + Vien:MHum, data = ILE)
+          summary(Int2)
+          autoplot(Int2)
+          vif(Int2)
+          AIC(SemifinalCxQModel, Int2)
+            ## High VIF; will remove Vien & MHum
+            ## AIC: 4070.773
+    
+        #### Addition of Vien:MTemp w/ removal of Vien  
+      Int2.1 <- glm.nb(CxQ ~ Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr + Vien:MHum, data = ILE)
+          summary(Int2.1)
+          autoplot(Int2.1)
+          vif(Int2.1)
+          AIC(SemifinalCxQModel, Int2, Int2.1)
+            ## VIF normalized, but worse fit.
+            ## AIC: 4116.275
+    
+    ##### Will not include Vien:MTemp - no major improvement in AIC & worsens interpretability.
+      
+          
+                    
+        #### Addition of MetHLC:MTemp   
+      Int3 <- glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr + Met:MTemp, data = ILE)
+          summary(Int1)
+          autoplot(Int1)
+          vif(Int1)
+          AIC(SemifinalCxQModel, Int1)
+            ## High VIF; will remove Vien
+            ## AIC: 4070.651
+    
+        #### Addition of Vien:MTemp w/ removal of Vien  
+      Int3.1 <- glm.nb(CxQ ~ MHum + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr +  Met:MTemp, data = ILE)
+          summary(Int3.1)
+          autoplot(Int3.1)
+          vif(Int3.1)
+          AIC(SemifinalCxQModel, Int3, Int3.1)
+            ## High VIF between MHum & Met:MTemp
+            ## AIC: 4078.480
+          
+      Int3.2 <- glm.nb(CxQ ~ MHum + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr +  Met:MTemp:MHum, data = ILE)
+          summary(Int3.2)
+          autoplot(Int3.2)
+          vif(Int3.2)
+          AIC(SemifinalCxQModel, Int3, Int3.1, Int3.2)
+            ##
+            ## AIC: 4086.538
+          
+      Int3.3 <- glm.nb(CxQ ~ Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr +  Met:MTemp:MHum, data = ILE)
+          summary(Int3.3)
+          autoplot(Int3.3)
+          vif(Int3.3)
+          AIC(SemifinalCxQModel, Int3, Int3.1, Int3.2, Int3.3)
+            ##
+            ## AIC: 4104.079	         
+          
+      Int3.4 <- glm.nb(CxQ ~ Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr +  Met:MTemp:MHum, data = ILE)
+          summary(Int3.4)
+          autoplot(Int3.4)
+          vif(Int3.4)
+          AIC(SemifinalCxQModel, Int3, Int3.1, Int3.2, Int3.3, Int3.4)
+            ##
+            ## AIC: 4104.000
+          
+      Int3.5 <- glm.nb(CxQ ~ Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr +  Met:MTemp:MHum:Vien, data = ILE)
+          summary(Int3.5)
+          autoplot(Int3.5)
+          vif(Int3.5)
+          AIC(SemifinalCxQModel, Int3, Int3.1, Int3.2, Int3.3, Int3.4, Int3.5)
+            ##
+            ## AIC: 4271.279
+    ##### Will not include Met:MTemp - AIC not dramatically better & high VIF.
+ 
+          
+```
+
+```{r Final Negbin Model}
+
+    ##### Final Model
+    CxQModel <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    CxQModel
+    summary(CxQModel)
+    plot(CxQModel)
+    ## AIC:4082.467
+    
+    stargazer(CxQModel, type= "text", align = TRUE)
+
+    ##### Final Model v. Poisson for LRT        
+    CxQPoissonLRTModel <- glm(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE, family = "poisson")
+
+  ##### Likelihood ratio test between the models
+  CxQModellr_test <- anova(CxQPoissonLRTModel, CxQModel, test = "LRT")
+  CxQModellr_test
+
+  stargazer(CxQModel, CxQPoissonLRTModel, type= "text", align = TRUE)
+   stargazer(CxQModellr_test, type= "text", align = TRUE)
+    
+```
+
+```{r Final Model using other model types}
+    ##### Final Model
+    CxQModel <-  glm.nb(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    summary(CxQModel)
+    
+    FinalCxQModelOLS <-  glm(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE)
+    summary(FinalCxQModelOLS)
+    
+    FinalCxQModelPois <-  glm(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE, family = "poisson")
+    summary(FinalCxQModelPois)   
+
+    FinalCxQModelzinb <-  zeroinfl(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr | MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE, dist = "negbin")
+    summary(FinalCxQModelzinb)
+
+    FinalCxQModelHPoi <-  hurdle(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr | MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE, dist = "poisson")
+    summary(FinalCxQModelHPoi)
+    
+    FinalCxQModelHnegbin <-  hurdle(CxQ ~ MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr | MHum + Vien + Met + Loc + TimeofDay + Aug + Sep + Oct + Jan + Feb + Mar + Apr, data = ILE, dist = "negbin")
+    summary(FinalCxQModelHnegbin)
+    autoplot.countreg(FinalCxQModelHnegbin)
+    
+    AIC(CxQModel, FinalCxQModelOLS, FinalCxQModelPois, FinalCxQModelzinb, FinalCxQModelHPoi, FinalCxQModelHnegbin)
+```
+
+```{r Hurdle Model Reverse Stepwise Regression (OLD RAINFALL)}
+
+   QuinxA <-  hurdle(ILE$CxQ ~ MTemp + MHum + Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes | MTemp + MHum + Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxA)
+    AIC(QuinxA)
+    vif(QuinxA)
+    autoplot.countreg(QuinxA)
+
+   QuinxB <-  hurdle(ILE$CxQ ~ MHum + Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes | MHum + Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxB)
+    AIC(QuinxB)
+    vif(QuinxB)
+    autoplot.countreg(QuinxB)
+    
+   QuinxC <-  hurdle(ILE$CxQ ~ Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes | Vien + Rain + RainL1 + RainL2 + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxC)
+    AIC(QuinxC)
+    vif(QuinxC)
+    autoplot.countreg(QuinxC)
+    
+   QuinxD <-  hurdle(ILE$CxQ ~ Vien + Rain + RainL2 + Met + Loc + TimeofDay + Mes | Vien + Rain + RainL2 + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxD)
+    AIC(QuinxD)
+    vif(QuinxD)
+    autoplot.countreg(QuinxD)
+    
+   QuinxE <-  hurdle(ILE$CxQ ~ Vien + Rain + Met + Loc + TimeofDay + Mes | Vien + Rain + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxE)
+    AIC(QuinxE)
+    vif(QuinxE)
+    autoplot.countreg(QuinxE)
+    
+   QuinxF <-  hurdle(ILE$CxQ ~ Rain + Met + Loc + TimeofDay + Mes | Rain + Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxF)
+    AIC(QuinxF)
+    vif(QuinxF)
+    autoplot.countreg(QuinxF)
+
+   QuinxG <-  hurdle(ILE$CxQ ~ Met + Loc + TimeofDay + Mes | Met + Loc + TimeofDay + Mes, dist = "negbin", data = ILE)
+    summary(QuinxG)
+    AIC(QuinxG)
+    vif(QuinxG)
+    autoplot.countreg(QuinxG)
+
+   QuinxH <-  hurdle(ILE$CxQ ~ Met + Loc + TimeofDay + Feb + Apr + Oct | Met + Loc + TimeofDay + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxH)
+    AIC(QuinxH)
+    vif(QuinxH)
+    autoplot.countreg(QuinxH)
+
+   QuinxI <-  hurdle(ILE$CxQ ~ MHum + Met + Loc + TimeofDay + Feb + Apr + Oct | MHum + Met + Loc + TimeofDay + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxI)
+    AIC(QuinxI)
+    vif(QuinxI)
+    autoplot.countreg(QuinxI)
+    
+   QuinxJ <-  hurdle(ILE$CxQ ~ MHum + Met + Loc + Midday + Evening + Feb + Apr + Oct | MHum + Met + Loc + Midday + Evening + Feb + Apr + Oct , dist = "negbin", data = ILE)
+    summary(QuinxJ)
+    AIC(QuinxJ)
+    vif(QuinxJ)
+    autoplot.countreg(QuinxJ)
+    
+   QuinxK <-  hurdle(ILE$CxQ ~ Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Hora18 + Feb + Apr + Oct | Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Hora18 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxK)
+    AIC(QuinxK)
+    vif(QuinxK)
+    autoplot.countreg(QuinxK)
+    
+   QuinxL <-  hurdle(ILE$CxQ ~ Met + Loc + Hora5 + Hora6 + Hora7 + Hora9  + Hora10 + Hora11 + Hora12 + Hora13 + Hora17 + Hora19 + Feb + Apr + Oct | Met + Loc + Hora5 + Hora6 + Hora7 + Hora9  + Hora10 + Hora11 + Hora12 + Hora13 + Hora15 + Hora17 + Hora19 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxL)
+    AIC(QuinxL)
+    vif(QuinxL)
+    autoplot.countreg(QuinxL)
+    
+   QuinxM <-  hurdle(ILE$CxQ ~ Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora15 + Hora17 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxM)
+    AIC(QuinxM)
+    vif(QuinxM)
+    autoplot.countreg(QuinxM)
+
+   QuinxN <-  hurdle(ILE$CxQ ~ Met + Loc + Midday + Evening + Feb + Apr + Oct | MHum + Met + Loc + Midday + Evening + Feb + Apr + Oct , dist = "negbin", data = ILE)
+    summary(QuinxN)
+    AIC(QuinxN)
+    vif(QuinxN)
+    autoplot.countreg(QuinxN)
+    
+  ##### Comparing AICs for models with midday/evening versus exact times of day      
+  AIC(QuinxN, QuinxM)
+    # AIC for specific times of day is lower than for exact TOD
+
+   QuinxO <-  hurdle(ILE$CxQ ~ MTemp + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | MTemp + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora15 + Hora17 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxO)
+    AIC(QuinxO)
+    vif(QuinxO)
+    autoplot.countreg(QuinxO)
+    
+   QuinxP <-  hurdle(ILE$CxQ ~ Vien + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | Vien + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora15 + Hora17 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxP)
+    AIC(QuinxP)
+    vif(QuinxP)
+    autoplot.countreg(QuinxP)    
+
+   QuinxQ <-  hurdle(ILE$CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora15 + Hora17 + Feb + Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxQ)
+    AIC(QuinxQ)
+    vif(QuinxQ)
+    autoplot.countreg(QuinxQ)
+  
+   QuinxR <-  hurdle(ILE$CxQ ~ Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxR)
+    AIC(QuinxR)
+    vif(QuinxR)
+    autoplot.countreg(QuinxR)
+    
+   QuinxS <-  hurdle(ILE$CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxS)
+    AIC(QuinxS)
+    vif(QuinxS)
+    autoplot.countreg(QuinxS)
+
+   QuinxT <-  hurdle(ILE$CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxT)
+    AIC(QuinxT)
+    vif(QuinxT)
+    autoplot.countreg(QuinxT)
+    
+   QuinxU <-  hurdle(ILE$CxQ ~ RainL2 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL2 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxU)
+    AIC(QuinxU)
+    vif(QuinxU)
+    autoplot.countreg(QuinxU)
+    
+    AIC(QuinxT, QuinxU)
+    
+   QuinxV <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxV)
+    AIC(QuinxV)
+    vif(QuinxV)
+    autoplot.countreg(QuinxV)
+
+    
+```
+```{r Final Hurdle Model with Interaction Terms (OLD RAINFALL)}
+
+  # Original Model w/o Interaction Terms
+   QuinxV <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxV)
+    AIC(QuinxV)
+    vif(QuinxV)
+    autoplot.countreg(QuinxV) 
+
+  # Rain * Humidity
+   QuinxInt1 <-  hurdle(CxQ ~ RainL1*MHum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*MHum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt1)
+    AIC(QuinxV, QuinxInt1)
+    vif(QuinxInt1)
+    autoplot.countreg(QuinxInt1)
+    # Not significant, worse AIC
+
+  # Rain * Temperature
+   QuinxInt2 <-  hurdle(CxQ ~ RainL1*MTemp + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*MTemp + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt2)
+    AIC(QuinxV, QuinxInt2)
+    vif(QuinxInt2)
+    autoplot.countreg(QuinxInt2)
+    # Not significant, worse AIC
+
+  # Rain * Wind
+   QuinxInt3 <-  hurdle(CxQ ~ RainL1*Vien + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Vien + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt3)
+    AIC(QuinxV, QuinxInt3)
+    vif(QuinxInt3)
+    autoplot.countreg(QuinxInt3)
+    # Not significant, worse AIC
+
+  # Rain * Method
+   QuinxInt4 <-  hurdle(CxQ ~ RainL1*Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt4)
+    AIC(QuinxV, QuinxInt4)
+    vif(QuinxInt4)
+    autoplot.countreg(QuinxInt4)
+    # Not significant; slightly better AIC, but will exclude
+
+  # Rain * Loc
+   QuinxInt5 <-  hurdle(CxQ ~ RainL1*Loc + Met + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Loc + Met + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt5)
+    AIC(QuinxV, QuinxInt5)
+    vif(QuinxInt5)
+    autoplot.countreg(QuinxInt5)
+    # Not significant, worse AIC
+
+  # Rain * Hora
+   QuinxInt6 <-  hurdle(CxQ ~ RainL1*Hora + Met + Loc + Feb + Apr + Oct | RainL1*Hora + Met + Loc + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt6)
+    AIC(QuinxV, QuinxInt6)
+    vif(QuinxInt6)
+    autoplot.countreg(QuinxInt6)
+    # Model does not converge    
+    
+  # Rain * TimeofDay (joint TOD var)
+   QuinxInt7 <-  hurdle(CxQ ~ RainL1*TimeofDay + Met + Loc + Feb + Apr + Oct | RainL1*TimeofDay + Met + Loc + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt7)
+    AIC(QuinxV, QuinxInt7)
+    vif(QuinxInt7)
+    autoplot.countreg(QuinxInt7) 
+    # Not significant, worse AIC
+
+  # Rain * Mes        
+   QuinxInt8 <-  hurdle(CxQ ~ RainL1*Mes + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 | RainL1*Mes + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17, dist = "negbin", data = ILE)
+    summary(QuinxInt8)
+    AIC(QuinxV, QuinxInt8)
+    vif(QuinxInt8)
+    autoplot.countreg(QuinxInt8)
+    # Slightly better AIC; will try singular months
+    
+  # Rain * Feb
+   QuinxInt9 <-  hurdle(CxQ ~ RainL1*Feb + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Apr + Oct | RainL1*Feb + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt9)
+    AIC(QuinxV, QuinxInt9)
+    vif(QuinxInt9)
+    autoplot.countreg(QuinxInt9)
+    # Significant in zero model; include in zero but not count
+   QuinxInt9A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Feb + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt9A)
+    AIC(QuinxV, QuinxInt9, QuinxInt9A)
+    vif(QuinxInt9A)
+    autoplot.countreg(QuinxInt9A)
+    # Better fit when dropping count term; will adopt
+
+  # Rain * Apr        
+   QuinxInt10 <-  hurdle(CxQ ~ RainL1*Apr + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct | RainL1*Apr + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt10)
+    AIC(QuinxV, QuinxInt9A, QuinxInt10)
+    vif(QuinxInt10)
+    autoplot.countreg(QuinxInt10)
+    # Rain*Apr significant in Zero model
+   QuinxInt10A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Feb + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Oct + Rain:Apr, dist = "negbin", data = ILE)
+    summary(QuinxInt10A)
+    AIC(QuinxV, QuinxInt9A, QuinxInt10, QuinxInt10A)
+    vif(QuinxInt10A)
+    autoplot.countreg(QuinxInt10A)
+    # Rain*Apr no longer significant in Zero model
+   QuinxInt10B <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Apr + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt10B)
+    AIC(QuinxV, QuinxInt9A, QuinxInt10, QuinxInt10A, QuinxInt10B)
+    vif(QuinxInt10B)
+    autoplot.countreg(QuinxInt10B)
+    # Best AIC so far
+   QuinxInt10C <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + RainL1:Feb + RainL1:Apr + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt10C)
+    AIC(QuinxV, QuinxInt9A, QuinxInt10, QuinxInt10A, QuinxInt10B, QuinxInt10C)
+    vif(QuinxInt10C)
+    autoplot.countreg(QuinxInt10C)
+    # Worse AIC
+    QuinxInt10D <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Apr + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + RainL1:Feb + Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt10D)
+    AIC(QuinxV, QuinxInt9A, QuinxInt10, QuinxInt10A, QuinxInt10B, QuinxInt10C, QuinxInt10D)
+    vif(QuinxInt10D)
+    autoplot.countreg(QuinxInt10D)
+    # Better AIC, but AIC of 9A is better
+
+  # Rain * Oct        
+   QuinxInt11 <-  hurdle(CxQ ~ RainL1*Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1*Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt11)
+    AIC(QuinxV, QuinxInt9A, QuinxInt11)
+    vif(QuinxInt11)
+    autoplot.countreg(QuinxInt11)
+    # Slight significance of interaction in zero model; will drop from count and drop non-interactive singular terms from zero
+   QuinxInt11A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt11A)
+    AIC(QuinxV, QuinxInt9A, QuinxInt11, QuinxInt11A)
+    vif(QuinxInt11A)
+    autoplot.countreg(QuinxInt11A)
+    # Better AIC & significance; will add Feb
+   QuinxInt11B <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt11B)
+    AIC(QuinxV, QuinxInt9A, QuinxInt11, QuinxInt11A, QuinxInt11B)
+    vif(QuinxInt11B)
+    autoplot.countreg(QuinxInt11B)
+    # Current Best Fit
+   QuinxInt11C <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17, dist = "negbin", data = ILE)
+    summary(QuinxInt11C)
+    AIC(QuinxV, QuinxInt9A, QuinxInt11, QuinxInt11A, QuinxInt11B, QuinxInt11C)
+    vif(QuinxInt11C)
+    autoplot.countreg(QuinxInt11C)
+    # Worse
+
+  # Rain * Significant Hours        
+   QuinxInt12 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5:RainL1 + Hora6:RainL1 + Hora7:RainL1 + Hora11:RainL1 + Hora12:RainL1 + Hora13:RainL1 + Hora17:RainL1 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5:RainL1 + Hora6:RainL1 + Hora7:RainL1 + Hora11:RainL1 + Hora12:RainL1 + Hora13:RainL1 + Hora17:RainL1 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt12)
+    AIC(QuinxV, QuinxInt11B, QuinxInt12)
+    vif(QuinxInt12)
+    autoplot.countreg(QuinxInt12)
+    # Interaction with every hour :/ But AIC is MUCH worse
+   QuinxInt12A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5:RainL1 + Hora6:RainL1 + Hora7:RainL1 + Hora11:RainL1 + Hora12:RainL1 + Hora13:RainL1 + Hora17:RainL1 + Feb + Apr + Oct | RainL1 + RainL1:Oct + Met + Loc + Hora5:RainL1 + Hora6:RainL1 + Hora7:RainL1 + Hora11:RainL1 + Hora12:RainL1 + Hora13:RainL1 + Hora17:RainL1 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt12A)
+    AIC(QuinxV, QuinxInt11B, QuinxInt12, QuinxInt12A)
+    vif(QuinxInt12A)
+    autoplot.countreg(QuinxInt12A)
+    # AIC is worse
+    
+    # Pseudo-R squared to determine if interaction terms will be included
+      logLik_QuinxInt12A <- logLik(QuinxInt12A)
+      logLik_QuinxInt11B <- logLik(QuinxInt11B)
+      
+      # Calculate the log likelihood of the null model
+      # This requires fitting two null models: one for the zero hurdle part and one for the count part
+      null_model_CxQzero <- hurdle(CxQ ~ 1, dist = "binomial", data = ILE)
+      null_model_CxQcount <- hurdle(CxQ ~ 1, dist = "negbin", zero.dist = "binomial", data = ILE)
+      
+      logLik_null_CxQzero <- logLik(null_model_CxQzero, part = "zero")
+      logLik_null_CxQcount <- logLik(null_model_CxQcount, part = "count")
+      logLik_null_CxQcombined <- logLik_null_CxQzero + logLik_null_CxQcount
+      
+      # McFadden's pseudo-R-squared
+      pseudo_R2QuinxInt12A <- 1 - (logLik_QuinxInt12A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt11B <- 1 - (logLik_QuinxInt11B / logLik_null_CxQcombined)
+      pseudo_R2QuinxInt12A
+      pseudo_R2logLik_QuinxInt11B
+      
+      # LRT
+      lrt_QuinxInt12AQuinxInt11B <- lrtest(QuinxInt12A, QuinxInt11B)
+      lrt_QuinxInt12AQuinxInt11B
+      
+      ##### Based on LRT & pseudo-R Squared, will not include hourly interaction terms
+
+  # Temp * Method        
+   QuinxInt13 <-  hurdle(CxQ ~ RainL1 + Met*MTemp + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met*MTemp + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt13)
+    # Pseudo-Rsquared
+      logLik_QuinxInt13 <- logLik(QuinxInt13)
+      pseudo_R2logLik_QuinxInt13 <- 1 - (logLik_QuinxInt13 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt13
+    AIC(QuinxV, QuinxInt11B, QuinxInt13)
+    vif(QuinxInt13)
+    autoplot.countreg(QuinxInt13)
+    # Better AIC, lots of insignificant vars
+   QuinxInt13A <-  hurdle(CxQ ~ RainL1 + Met + Met:MTemp + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt13A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt13A <- logLik(QuinxInt13A)
+      pseudo_R2logLik_QuinxInt13A <- 1 - (logLik_QuinxInt13A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt13A
+    AIC(QuinxV, QuinxInt11B, QuinxInt13A)
+    vif(QuinxInt13A)
+    autoplot.countreg(QuinxInt13A)
+    # Minutely better AIC; will do LRT
+      # LRT
+      lrt_QuinxInt11BQuinxInt13A <- lrtest(QuinxInt11B, QuinxInt13A)
+      lrt_QuinxInt11BQuinxInt13A
+      # Not significantly better than 11B based on LRT
+    
+  # Temp * Loc        
+   QuinxInt14 <-  hurdle(CxQ ~ RainL1 + Met + Loc*MTemp + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc*MTemp + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt14)
+    # Pseudo-Rsquared
+      logLik_QuinxInt14 <- logLik(QuinxInt14)
+      pseudo_R2logLik_QuinxInt14 <- 1 - (logLik_QuinxInt14 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt14
+    AIC(QuinxV, QuinxInt11B, QuinxInt14)
+    vif(QuinxInt14)
+    autoplot.countreg(QuinxInt14)
+    # Slightly better AIC, lots of insignificant vars
+   QuinxInt14A <-  hurdle(CxQ ~ RainL1 + Met + Loc*MTemp + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt14A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt14A <- logLik(QuinxInt14A)
+      pseudo_R2logLik_QuinxInt14A <- 1 - (logLik_QuinxInt14A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt14A
+    AIC(QuinxV, QuinxInt11B, QuinxInt14A)
+    vif(QuinxInt14A)
+    autoplot.countreg(QuinxInt14A)
+    # Minutely better AIC; will do LRT
+      # LRT
+      lrt_QuinxInt11BQuinxInt14A <- lrtest(QuinxInt11B, QuinxInt14A)
+      lrt_QuinxInt11BQuinxInt14A
+      # Not significantly better than 11B based on LRT
+      
+  # Temp * Mes        
+   QuinxInt15 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb*MTemp + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb*MTemp, dist = "negbin", data = ILE)
+    summary(QuinxInt15)
+    # Pseudo-Rsquared
+      logLik_QuinxInt15 <- logLik(QuinxInt15)
+      pseudo_R2logLik_QuinxInt15 <- 1 - (logLik_QuinxInt15 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt15
+    AIC(QuinxV, QuinxInt11B, QuinxInt15)
+    vif(QuinxInt15)
+    autoplot.countreg(QuinxInt15)
+    # Slightly better AIC, lots of insignificant vars
+   QuinxInt15A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:MTemp + Apr + Oct | MTemp + RainL1 + RainL1:Feb + RainL1:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt15A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt15A <- logLik(QuinxInt15A)
+      pseudo_R2logLik_QuinxInt15A <- 1 - (logLik_QuinxInt15A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt15A
+    AIC(QuinxV, QuinxInt11B, QuinxInt15, QuinxInt15A)
+    vif(QuinxInt15A)
+    autoplot.countreg(QuinxInt15A)
+    # Minutely better AIC; will do LRT
+      # LRT
+      lrt_QuinxInt11BQuinxInt15A <- lrtest(QuinxInt11B, QuinxInt15A)
+      lrt_QuinxInt11BQuinxInt15A
+      # Significantly better than 11B based on LRT
+    # New Best Fit Model
+
+  # Hum * Method
+   QuinxInt16 <-  hurdle(CxQ ~ RainL1 + Met*MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:MTemp + Apr + Oct | MTemp + RainL1 + RainL1:Feb + RainL1:Oct + Met*MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt16)
+    # Pseudo-Rsquared
+      logLik_QuinxInt16 <- logLik(QuinxInt16)
+      pseudo_R2logLik_QuinxInt16 <- 1 - (logLik_QuinxInt16 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt16
+    AIC(QuinxV, QuinxInt15A, QuinxInt16)
+    vif(QuinxInt16)
+    autoplot.countreg(QuinxInt16)
+    # Slightly better AIC; will keep int for zero model
+   QuinxInt16A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:MTemp + Apr + Oct | MTemp + RainL1 + RainL1:Feb + RainL1:Oct + Met + Met:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt16A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt16A <- logLik(QuinxInt16A)
+      pseudo_R2logLik_QuinxInt16A <- 1 - (logLik_QuinxInt16A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt16A
+    AIC(QuinxV, QuinxInt11B, QuinxInt16, QuinxInt16A)
+    vif(QuinxInt16A)
+    autoplot.countreg(QuinxInt16A)
+    # Minutely better AIC; will drop MetHDN & MTemp
+   QuinxInt16B <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:MTemp + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt16B)
+    # Pseudo-Rsquared
+      logLik_QuinxInt16B <- logLik(QuinxInt16B)
+      pseudo_R2logLik_QuinxInt16B <- 1 - (logLik_QuinxInt16B / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt16B
+    AIC(QuinxV, QuinxInt11B, QuinxInt16, QuinxInt16B)
+    vif(QuinxInt16B)
+    autoplot.countreg(QuinxInt16B)
+    # Minutely better AIC; will LRT
+      # LRT
+      lrt_QuinxInt15AQuinxInt16B <- lrtest(QuinxInt15A, QuinxInt16B)
+      lrt_QuinxInt15AQuinxInt16B
+      # Significantly better than 15A based on LRT
+    # New Best Fit Model
+      
+  # Hum * Mes
+   QuinxInt17 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb*MHum + Feb:MTemp + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb*MHum, dist = "negbin", data = ILE)
+    summary(QuinxInt17)
+    # Pseudo-Rsquared
+      logLik_QuinxInt17 <- logLik(QuinxInt17)
+      pseudo_R2logLik_QuinxInt17 <- 1 - (logLik_QuinxInt17 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt17
+    AIC(QuinxV, QuinxInt16B, QuinxInt17)
+    vif(QuinxInt17)
+    autoplot.countreg(QuinxInt17)
+    # Slightly better AIC; will drop non-significant vars
+   QuinxInt17A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Feb:MTemp + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt17A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt17A <- logLik(QuinxInt17A)
+      pseudo_R2logLik_QuinxInt17A <- 1 - (logLik_QuinxInt17A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt17A
+    AIC(QuinxV, QuinxInt16B, QuinxInt17A)
+    vif(QuinxInt17A)
+    autoplot.countreg(QuinxInt17A)
+    # Will drop non-significant vars
+   QuinxInt17B <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt17B)
+    # Pseudo-Rsquared
+      logLik_QuinxInt17B <- logLik(QuinxInt17B)
+      pseudo_R2logLik_QuinxInt17B <- 1 - (logLik_QuinxInt17B / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt17B
+    AIC(QuinxV, QuinxInt16B, QuinxInt17B)
+    vif(QuinxInt17B)
+    autoplot.countreg(QuinxInt17B)
+    # Will re-add Feb:Mhum to zero model; LRT to determine if truly superior to 16B
+      # LRT
+      lrt_QuinxInt16BQuinxInt17B <- lrtest(QuinxInt16B, QuinxInt17B)
+      lrt_QuinxInt16BQuinxInt17B
+    # New Best Fit Model
+   QuinxInt17C <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum, dist = "negbin", data = ILE)
+    summary(QuinxInt17C)
+    # Pseudo-Rsquared
+      logLik_QuinxInt17C <- logLik(QuinxInt17C)
+      pseudo_R2logLik_QuinxInt17C <- 1 - (logLik_QuinxInt17C / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt17C
+    AIC(QuinxV, QuinxInt16B, QuinxInt17B, QuinxInt17C)
+    vif(QuinxInt17C)
+    autoplot.countreg(QuinxInt17C)
+    # Worse Fit
+
+  # Hum * April        
+   QuinxInt18 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr*MHum + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr*MHum, dist = "negbin", data = ILE)
+    summary(QuinxInt18)
+    # Pseudo-Rsquared
+      logLik_QuinxInt18 <- logLik(QuinxInt18)
+      pseudo_R2logLik_QuinxInt18 <- 1 - (logLik_QuinxInt18 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt18
+    AIC(QuinxV, QuinxInt17B, QuinxInt18)
+    vif(QuinxInt18)
+    autoplot.countreg(QuinxInt18)
+    # Slightly better AIC; will remove from zero model and adjust count
+   QuinxInt18A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt18A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt18A <- logLik(QuinxInt18A)
+      pseudo_R2logLik_QuinxInt18A <- 1 - (logLik_QuinxInt18A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt18A
+    AIC(QuinxV, QuinxInt17B, QuinxInt18, QuinxInt18A)
+    vif(QuinxInt18A)
+    autoplot.countreg(QuinxInt18A)
+    # Current best fit; will do LRT
+      # LRT
+      lrt_QuinxInt17BQuinxInt18A <- lrtest(QuinxInt17B, QuinxInt18A)
+      lrt_QuinxInt17BQuinxInt18A
+      #Statistically significant difference; will use 18A
+
+  # MHum * Oct            
+   QuinxInt19 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct*MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct*MHum, dist = "negbin", data = ILE)
+    summary(QuinxInt19)
+    # Pseudo-Rsquared
+      logLik_QuinxInt19 <- logLik(QuinxInt19)
+      pseudo_R2logLik_QuinxInt19 <- 1 - (logLik_QuinxInt19 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt19
+    AIC(QuinxV, QuinxInt18A, QuinxInt19)
+    vif(QuinxInt19)
+    autoplot.countreg(QuinxInt19)
+    # Will drop MHum to assess AIC
+   QuinxInt19A <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt19A)
+    # Pseudo-Rsquared
+      logLik_QuinxInt19A <- logLik(QuinxInt19A)
+      pseudo_R2logLik_QuinxInt19A <- 1 - (logLik_QuinxInt19A / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt19A
+    AIC(QuinxV, QuinxInt18A, QuinxInt19, QuinxInt19A)
+    vif(QuinxInt19A)
+    autoplot.countreg(QuinxInt19A)
+    # Will drop and compare without Oct
+   QuinxInt19B <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt19B)
+    # Pseudo-Rsquared
+      logLik_QuinxInt19B <- logLik(QuinxInt19B)
+      pseudo_R2logLik_QuinxInt19B <- 1 - (logLik_QuinxInt19B / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt19B
+    AIC(QuinxV, QuinxInt18A, QuinxInt19, QuinxInt19A, QuinxInt19B)
+    vif(QuinxInt19B)
+    autoplot.countreg(QuinxInt19B)
+    # LRT comparing A & B
+      lrt_QuinxInt19AQuinxInt19B <- lrtest(QuinxInt19A, QuinxInt19B)
+      lrt_QuinxInt19AQuinxInt19B
+      # Not significant at alpha of 5%
+    # LRT comparing B & current preferred model
+      lrt_QuinxInt18AQuinxInt19B <- lrtest(QuinxInt18A, QuinxInt19B)
+      lrt_QuinxInt18AQuinxInt19B
+      # 19B is preferred
+
+  # Vien * Met     
+   QuinxInt20 <-  hurdle(CxQ ~ RainL1 + Vien*Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Vien*Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt20)
+    # Pseudo-Rsquared
+      logLik_QuinxInt20 <- logLik(QuinxInt20)
+      pseudo_R2logLik_QuinxInt20 <- 1 - (logLik_QuinxInt20 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt20
+    AIC(QuinxV, QuinxInt19B, QuinxInt20)
+    vif(QuinxInt20)
+    autoplot.countreg(QuinxInt20)
+    # Worse fit
+
+  # Vien * Loc     
+   QuinxInt21 <-  hurdle(CxQ ~ RainL1 + Met + Vien*Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Vien*Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt21)
+    # Pseudo-Rsquared
+      logLik_QuinxInt21 <- logLik(QuinxInt21)
+      pseudo_R2logLik_QuinxInt21 <- 1 - (logLik_QuinxInt21 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt21
+    AIC(QuinxV, QuinxInt19B, QuinxInt21)
+    vif(QuinxInt21)
+    autoplot.countreg(QuinxInt21)
+    # Worse fit
+  
+  # Vien * Feb     
+   QuinxInt22 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Vien*Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Vien*Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Vien*Feb, dist = "negbin", data = ILE)
+    summary(QuinxInt22)
+    # Pseudo-Rsquared
+      logLik_QuinxInt22 <- logLik(QuinxInt22)
+      pseudo_R2logLik_QuinxInt22 <- 1 - (logLik_QuinxInt22 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt22
+    AIC(QuinxV, QuinxInt19B, QuinxInt22)
+    vif(QuinxInt22)
+    autoplot.countreg(QuinxInt22)
+    # Worse fit
+    
+  # Vien * Apr     
+   QuinxInt23 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Vien*Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Vien*Apr, dist = "negbin", data = ILE)
+    summary(QuinxInt23)
+    # Pseudo-Rsquared
+      logLik_QuinxInt23 <- logLik(QuinxInt23)
+      pseudo_R2logLik_QuinxInt23 <- 1 - (logLik_QuinxInt23 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt23
+    AIC(QuinxV, QuinxInt19B, QuinxInt23)
+    vif(QuinxInt23)
+    autoplot.countreg(QuinxInt23)
+    # Worse fit
+    
+  # Vien * Oct     
+   QuinxInt24 <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum + Vien*Oct | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Vien*Oct, dist = "negbin", data = ILE)
+    summary(QuinxInt24)
+    # Pseudo-Rsquared
+      logLik_QuinxInt24 <- logLik(QuinxInt24)
+      pseudo_R2logLik_QuinxInt24 <- 1 - (logLik_QuinxInt24 / logLik_null_CxQcombined)
+      pseudo_R2logLik_QuinxInt24
+      lrtestQuinxVQuinxInt24 <- lrtest(QuinxInt24, QuinxV)
+      lrtestQuinxVQuinxInt24
+    AIC(QuinxV, QuinxInt19B, QuinxInt24)
+    vif(QuinxInt24)
+    autoplot.countreg(QuinxInt24)
+    # Worse fit
+```
+```{r Finalized Hurdle Model (OLD RAINFALL)}
+   FinalHurdleModel <-  hurdle(CxQ ~ RainL1 + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | RainL1 + RainL1:Feb + RainL1:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(FinalHurdleModel)
+    # Pseudo-Rsquared
+      logLik_FinalHurdleModel <- logLik(FinalHurdleModel)
+      logLik_FinalHurdleModel
+    AIC(FinalHurdleModel)
+    BIC(FinalHurdleModel)
+    vif(FinalHurdleModel)
+    autoplot.countreg(FinalHurdleModel)
+    
+```
+
+
+```{r LRT CxQ Code}
+################################################################################
+#                                 LRT Code                                     #
+################################################################################
+
+  # Create Null Models
+  nm0_CxQ <- hurdle(CxQ ~ 1, dist = "binomial", data = ILE)
+  nm_CxQ <- hurdle(CxQ ~ 1, dist = "negbin", zero.dist = "binomial", data = ILE)
+
+  # Obtain log Lik values for zero & count portions   
+  logLik_null_nm0_CxQ <- logLik(nm0_CxQ, part = "zero")
+  logLik_null_nm_CxQ <- logLik(nm_CxQ, part = "count")
+  logLik_null_CxQcombined <- logLik_null_nm0_CxQ + logLik_null_nm_CxQ
+
+
+```
+
+
+
+```{r Hurdle Model Stepwise Regression (New Rainfall)}
+
+  CxQ.1 <- hurdle(CxQ ~ Loc + Mes + Periodo + Met + MTemp + MHum + Vien + Rain | Loc + Mes + Periodo + Met + MTemp + MHum + Vien + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.1)
+      logLik_CxQ.1 <- logLik(CxQ.1)
+      logLik_CxQ.1
+    pR2(CxQ.1)
+    AIC(CxQ.1)
+    BIC(CxQ.1)
+    lrtest(nm_CxQ, CxQ.1)
+    vif(CxQ.1)
+    autoplot.countreg(CxQ.1)
+      # Improved
+
+  # Targetting VIF | Removing MHum
+  CxQ.2 <- hurdle(CxQ ~ Loc + Mes + Periodo + Met + MTemp + Vien + Rain | Loc + Mes + Periodo + Met + MTemp + Vien + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.2)
+      logLik_CxQ.2 <- logLik(CxQ.2)
+      logLik_CxQ.2
+    pR2(CxQ.2)
+    AIC(CxQ.1, CxQ.2)
+    BIC(CxQ.1, CxQ.2)
+    vif(CxQ.2)
+    autoplot.countreg(CxQ.2)
+      # Improved
+
+  # Targetting VIF | Removing MTemp
+  CxQ.3 <- hurdle(CxQ ~ Loc + Mes + Periodo + Met + Vien + Rain | Loc + Mes + Periodo + Met + Vien + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.3)
+      logLik_CxQ.3 <- logLik(CxQ.3)
+      logLik_CxQ.3
+      pR2(CxQ.3)
+    AIC(CxQ.1, CxQ.2, CxQ.3)
+    BIC(CxQ.1, CxQ.2, CxQ.3)
+    vif(CxQ.3)
+    autoplot.countreg(CxQ.3)
+      #Improved
+    
+  # Targetting VIF | Switching Periodo for Time of Day
+  CxQ.4 <- hurdle(CxQ ~ Loc + Mes + TimeofDay + Met + Vien + Rain | Loc + Mes + TimeofDay + Met + Vien + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.4)
+      logLik_CxQ.4 <- logLik(CxQ.4)
+      logLik_CxQ.4
+      pR2(CxQ.4)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4)
+    vif(CxQ.4)
+    autoplot.countreg(CxQ.4)
+      # VIF Improved; AIC worse - will use Periodo
+
+  # Targetting VIF | Breaking up Months
+  CxQ.5 <- hurdle(CxQ ~ Loc + Feb + Apr + Oct + TimeofDay + Met + Vien + Rain | Loc + Feb + Apr + Oct + TimeofDay + Met + Vien + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.5)
+      logLik_CxQ.5 <- logLik(CxQ.5)
+      logLik_CxQ.5
+      pR2(CxQ.5)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5)
+    vif(CxQ.5)
+    autoplot.countreg(CxQ.5)
+      # Best AIC so far.
+
+    
+  # Removing Wind
+  CxQ.6 <- hurdle(CxQ ~ Loc + Feb + Apr + Oct + TimeofDay + Met + Rain | Loc + Feb + Apr + Oct + TimeofDay + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.6)
+      logLik_CxQ.6 <- logLik(CxQ.6)
+      logLik_CxQ.6
+      pR2(CxQ.6)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6)
+    vif(CxQ.6)
+    autoplot.countreg(CxQ.6)
+      # Best AIC so far.
+    
+  # Removing April
+  CxQ.7 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + TimeofDay + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.7)
+      logLik_CxQ.7 <- logLik(CxQ.7)
+      logLik_CxQ.7
+      pR2(CxQ.7)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7)
+    vif(CxQ.7)
+    autoplot.countreg(CxQ.7)
+      # Slightly better AIC
+    
+  # Removing TOD NAs from Zero Model
+  CxQ.8 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Morning + Midday + Evening + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.8)
+      logLik_CxQ.8 <- logLik(CxQ.8)
+      logLik_CxQ.8
+      pR2(CxQ.8)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8)
+    vif(CxQ.8)
+    autoplot.countreg(CxQ.8)
+      # Best AIC so far.
+    
+  # Removing TOD Entirely from Zero Model
+  CxQ.9 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.9)
+      logLik_CxQ.9 <- logLik(CxQ.9)
+      logLik_CxQ.9
+      pR2(CxQ.9)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7,  CxQ.8, CxQ.9)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7,  CxQ.8, CxQ.9)
+    vif(CxQ.9)
+    autoplot.countreg(CxQ.9)
+      # Much worse AIC.
+
+  # Adding Morning back in 
+  CxQ.10 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Morning + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.10)
+      logLik_CxQ.10 <- logLik(CxQ.10)
+      logLik_CxQ.10
+      pR2(CxQ.10)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10)
+    vif(CxQ.10)
+    autoplot.countreg(CxQ.10)
+      # Much worse AIC.
+    
+  # Adding Midday back in 
+  CxQ.11 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Midday + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.11)
+      logLik_CxQ.11 <- logLik(CxQ.11)
+      logLik_CxQ.11
+      pR2(CxQ.11)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11)
+    vif(CxQ.11)
+    autoplot.countreg(CxQ.11)
+      # worse AIC.
+    
+  # Adding Evening back in 
+  CxQ.12 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Evening + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.12)
+      logLik_CxQ.12 <- logLik(CxQ.12)
+      logLik_CxQ.12
+      pR2(CxQ.12)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11, CxQ.12)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11, CxQ.12)
+    vif(CxQ.12)
+    autoplot.countreg(CxQ.12)
+      # worse AIC.
+    
+  # Adding Midday & Evening back in 
+  CxQ.13 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Midday + Evening + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.13)
+      logLik_CxQ.13 <- logLik(CxQ.13)
+      logLik_CxQ.13
+      pR2(CxQ.13)
+    AIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11, CxQ.12, CxQ.13)
+    BIC(CxQ.1, CxQ.2, CxQ.3, CxQ.4, CxQ.5, CxQ.6, CxQ.7, CxQ.8, CxQ.9, CxQ.10, CxQ.11, CxQ.12, CxQ.13)
+    vif(CxQ.13)
+    autoplot.countreg(CxQ.13)
+      # worse AIC.
+    
+  # Adding Additional Rain 
+  CxQ.14 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain + Rain3DMA + Rain7DMA + Rain14DMA | Loc + Feb + Oct + Midday + Evening + Met + Rain + Rain3DMA + Rain7DMA + Rain14DMA, dist = "negbin", data = ILE)
+    summary(CxQ.14)
+      logLik_CxQ.14 <- logLik(CxQ.14)
+      logLik_CxQ.14
+      pR2(CxQ.14)
+    AIC(CxQ.1, CxQ.13, CxQ.14)
+    BIC(CxQ.1, CxQ.13, CxQ.14)
+    vif(CxQ.14)
+    autoplot.countreg(CxQ.14)
+      # worse AIC.
+    
+  # Adjusting Additional Rain 
+  CxQ.15 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain + Rain7DMA + Rain14DMA | Loc + Feb + Oct + Midday + Evening + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.15)
+      logLik_CxQ.15 <- logLik(CxQ.15)
+      logLik_CxQ.15
+      pR2(CxQ.15)
+    AIC(CxQ.1, CxQ.13, CxQ.14, CxQ.15)
+    BIC(CxQ.1, CxQ.13, CxQ.14, CxQ.15)
+    vif(CxQ.15)
+    autoplot.countreg(CxQ.15)
+      # worse AIC.
+    
+  # Adjusting Additional Rain 
+  CxQ.16 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain14DMA | Loc + Feb + Oct + Midday + Evening + Met + Rain14DMA, dist = "negbin", data = ILE)
+    summary(CxQ.16)
+      logLik_CxQ.16 <- logLik(CxQ.16)
+      logLik_CxQ.16
+      pR2(CxQ.16)
+    AIC(CxQ.1, CxQ.13, CxQ.14, CxQ.15, CxQ.16)
+    BIC(CxQ.1, CxQ.13, CxQ.14, CxQ.15, CxQ.16)
+    vif(CxQ.16)
+    autoplot.countreg(CxQ.16)
+      # worse AIC.
+    
+  CxQ.17 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain3DMA | Loc + Feb + Oct + Midday + Evening + Met + Rain3DMA, dist = "negbin", data = ILE)
+    summary(CxQ.17)
+      logLik_CxQ.17 <- logLik(CxQ.17)
+      logLik_CxQ.17
+      pR2(CxQ.17)
+    AIC(CxQ.1, CxQ.13, CxQ.16, CxQ.17)
+    BIC(CxQ.1, CxQ.13, CxQ.16, CxQ.17)
+    vif(CxQ.17)
+    autoplot.countreg(CxQ.17)
+      # worse AIC.
+    
+  CxQ.18 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain7DMA | Loc + Feb + Oct + Midday + Evening + Met + Rain7DMA, dist = "negbin", data = ILE)
+    summary(CxQ.18)
+      logLik_CxQ.18 <- logLik(CxQ.18)
+      logLik_CxQ.18
+      pR2(CxQ.18)
+    AIC(CxQ.1, CxQ.13, CxQ.16, CxQ.18)
+    BIC(CxQ.1, CxQ.13, CxQ.16, CxQ.18)
+    vif(CxQ.18)
+    autoplot.countreg(CxQ.18)
+      # worse AIC.
+    
+  CxQ.19 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain3DSum | Loc + Feb + Oct + Midday + Evening + Met + Rain3DSum, dist = "negbin", data = ILE)
+    summary(CxQ.19)
+      logLik_CxQ.19 <- logLik(CxQ.19)
+      logLik_CxQ.19
+      pR2(CxQ.19)
+    AIC(CxQ.1, CxQ.13, CxQ.19)
+    BIC(CxQ.1, CxQ.13, CxQ.19)
+    vif(CxQ.19)
+    autoplot.countreg(CxQ.19)
+      # worse AIC.
+    
+  CxQ.20 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain7DSum | Loc + Feb + Oct + Midday + Evening + Met + Rain7DSum, dist = "negbin", data = ILE)
+    summary(CxQ.20)
+      logLik_CxQ.20 <- logLik(CxQ.20)
+      logLik_CxQ.20
+      pR2(CxQ.20)
+    AIC(CxQ.1, CxQ.13, CxQ.20)
+    BIC(CxQ.1, CxQ.13, CxQ.20)
+    vif(CxQ.20)
+    autoplot.countreg(CxQ.20)
+      # worse AIC.
+    
+  CxQ.21 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain14DSum | Loc + Feb + Oct + Midday + Evening + Met + Rain14DSum, dist = "negbin", data = ILE)
+    summary(CxQ.21)
+      logLik_CxQ.21 <- logLik(CxQ.21)
+      logLik_CxQ.21
+      pR2(CxQ.21)
+    AIC(CxQ.1, CxQ.13, CxQ.21)
+    BIC(CxQ.1, CxQ.13, CxQ.21)
+    vif(CxQ.21)
+    autoplot.countreg(CxQ.21)
+      # worse AIC.
+
+    
+## Reverting to current best fit (CxQ.13)        
+  CxQ.13 <- hurdle(CxQ ~ Loc + Feb + Oct + TimeofDay + Met + Rain | Loc + Feb + Oct + Midday + Evening + Met + Rain, dist = "negbin", data = ILE)
+    summary(CxQ.13)
+      logLik_CxQ.13 <- logLik(CxQ.13)
+      logLik_CxQ.13
+      pR2(CxQ.13)
+    AIC(CxQ.1, CxQ.13)
+    BIC(CxQ.1, CxQ.13)
+    vif(CxQ.13)
+    autoplot.countreg(CxQ.13)
+
+```
+
+
+```{r New Hurdle w/ Different Rains}
+
+   CxQ.22 <-  hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Feb + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.22)
+      logLik_CxQ.22 <- logLik(CxQ.22)
+      logLik_CxQ.22
+    pR2(CxQ.22)
+    AIC(CxQ.1, CxQ.13, CxQ.22)
+    BIC(CxQ.1, CxQ.13, CxQ.22)
+    vif(CxQ.22)
+    autoplot.countreg(CxQ.22)
+    
+   CxQ.23 <-  hurdle(CxQ ~ Rain3DMA + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.23)
+      logLik_CxQ.23 <- logLik(CxQ.23)
+      logLik_CxQ.23
+    pR2(CxQ.23)
+    AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23)
+    BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23)
+    vif(CxQ.23)
+    autoplot.countreg(CxQ.23)
+    
+CxQ.24 <- hurdle(CxQ ~ Rain7DMA + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.24)
+    logLik_CxQ.24 <- logLik(CxQ.24)
+    logLik_CxQ.24
+  pR2(CxQ.24)
+  AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24)
+  BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24)
+  vif(CxQ.24)
+  autoplot.countreg(CxQ.24)
+
+  
+CxQ.25 <- hurdle(CxQ ~ Rain14DMA + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.25)
+  logLik_CxQ.25 <- logLik(CxQ.25)
+  logLik_CxQ.25
+  pR2(CxQ.25)
+  AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24, CxQ.25)
+  BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24, CxQ.25)
+  vif(CxQ.25)
+  autoplot.countreg(CxQ.25)
+
+CxQ.26 <- hurdle(CxQ ~ Rain3DSum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+summary(CxQ.26)
+logLik_CxQ.26 <- logLik(CxQ.26)
+logLik_CxQ.26
+pR2(CxQ.26)
+AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24, CxQ.25, CxQ.26)
+BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.23, CxQ.24, CxQ.25, CxQ.26)
+vif(CxQ.26)
+autoplot.countreg(CxQ.26)
+
+
+
+    
+```
+
+
+
+```{r New Hurdle Optimisation}
+
+   CxQ.22 <-  hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Feb + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.22)
+      logLik_CxQ.22 <- logLik(CxQ.22)
+      logLik_CxQ.22
+    pR2(CxQ.22)
+    AIC(CxQ.1, CxQ.13, CxQ.22)
+    BIC(CxQ.1, CxQ.13, CxQ.22)
+    vif(CxQ.22)
+    autoplot.countreg(CxQ.22)
+
+   CxQ.28 <-  hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.28)
+      logLik_CxQ.28 <- logLik(CxQ.28)
+      logLik_CxQ.28
+    pR2(CxQ.28)
+    AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.28)
+    BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.28)
+    vif(CxQ.28)
+    autoplot.countreg(CxQ.28)
+
+   CxQ.29 <-  hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:Rain + Apr:Rain + Oct:Rain | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.29)
+      logLik_CxQ.29 <- logLik(CxQ.29)
+      logLik_CxQ.29
+    pR2(CxQ.29)
+    AIC(CxQ.1, CxQ.13, CxQ.22, CxQ.28, CxQ.29)
+    BIC(CxQ.1, CxQ.13, CxQ.22, CxQ.28, CxQ.29)
+    vif(CxQ.29)
+    autoplot.countreg(CxQ.29)
+
+
+   CxQ.nbB <-  glm.nb(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:Rain + Apr:Rain + Oct:Rain, data = ILE)
+      CxQ.nbBHum <-  glm.nb(CxQ ~ MHum+ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb:Rain + Apr:Rain + Oct:Rain, data = ILE)
+   vif(CxQ.nbB)
+   AIC(CxQ.22, CxQ.nbB, CxQ.nbBHum)
+   BIC(CxQ.22, CxQ.nbB, CxQ.nbBHum)
+   pR2(CxQ.22)
+   pR2(CxQ.nbB)
+   pR2(CxQ.nbBHum)
+    #Conclusion after completing this model assessment: Hurdle has significantly better model fit parameters, both AIC/BIC & pseudo-Rsquared.
+
+      
+   CxQ.22 <-  hurdle(CxQ ~ MHum + Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Feb:MHum + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Feb + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+    summary(CxQ.22)
+      logLik_CxQ.22 <- logLik(CxQ.22)
+      logLik_CxQ.22
+    pR2(CxQ.22)
+    AIC(CxQ.1, CxQ.13, CxQ.22)
+    BIC(CxQ.1, CxQ.13, CxQ.22)
+    vif(CxQ.22)
+    autoplot.countreg(CxQ.22)
+
+
+CxQ.30 <- hurdle(CxQ ~ MHum + Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | MHum + Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.30)
+  logLik_CxQ.30 <- logLik(CxQ.30)
+  logLik_CxQ.30
+  pR2(CxQ.30)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30)
+  vif(CxQ.30)
+  autoplot.countreg(CxQ.30)
+
+CxQ.31 <- hurdle(CxQ ~ MHum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.31)
+  logLik_CxQ.31 <- logLik(CxQ.31)
+  logLik_CxQ.31
+  pR2(CxQ.31)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31)
+  vif(CxQ.31)
+  autoplot.countreg(CxQ.31)
+  
+CxQ.31 <- hurdle(CxQ ~ MHum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.31)
+  logLik_CxQ.31 <- logLik(CxQ.31)
+  logLik_CxQ.31
+  pR2(CxQ.31)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31)
+  vif(CxQ.31)
+  autoplot.countreg(CxQ.31)
+  
+CxQ.32 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Apr:MHum + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.32)
+  logLik_CxQ.32 <- logLik(CxQ.32)
+  logLik_CxQ.32
+  pR2(CxQ.32)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32)
+  vif(CxQ.32)
+  autoplot.countreg(CxQ.32)
+  
+CxQ.33 <- hurdle(CxQ ~ MHum + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.33)
+  logLik_CxQ.33 <- logLik(CxQ.33)
+  logLik_CxQ.33
+  pR2(CxQ.33)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33)
+  vif(CxQ.33)
+  autoplot.countreg(CxQ.33)
+  
+CxQ.34 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb + Oct:MHum | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.34)
+  logLik_CxQ.34 <- logLik(CxQ.34)
+  logLik_CxQ.34
+  pR2(CxQ.34)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33, CxQ.34)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33, CxQ.34)
+  vif(CxQ.34)
+  autoplot.countreg(CxQ.34)
+  
+CxQ.35 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | Rain + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.35)
+  logLik_CxQ.35 <- logLik(CxQ.35)
+  logLik_CxQ.35
+  pR2(CxQ.35)
+  AIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33, CxQ.34, CxQ.35)
+  BIC(CxQ.1, CxQ.22, CxQ.27, CxQ.30, CxQ.31, CxQ.32, CxQ.33, CxQ.34, CxQ.35)
+  vif(CxQ.35)
+  autoplot.countreg(CxQ.35)
+  
+CxQ.36 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | MHum + Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.36)
+  logLik_CxQ.36 <- logLik(CxQ.36)
+  logLik_CxQ.36
+  pR2(CxQ.36)
+  AIC(CxQ.35, CxQ.36)
+  BIC(CxQ.35, CxQ.36)
+  vif(CxQ.36)
+  autoplot.countreg(CxQ.36)
+  
+CxQ.37 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.37)
+  logLik_CxQ.37 <- logLik(CxQ.37)
+  logLik_CxQ.37
+  pR2(CxQ.35)
+  pR2(CxQ.36)
+  pR2(CxQ.37)
+  AIC(CxQ.35, CxQ.36, CxQ.37)
+  BIC(CxQ.35, CxQ.36, CxQ.37)
+  vif(CxQ.37)
+  autoplot.countreg(CxQ.37)
+  
+  pR2(CxQ.35)
+  pR2(CxQ.37)
+summary(CxQ.35)
+summary(CxQ.37)
+  # 37 is the best currently
+```
+
+```{r Reverse Stepwise using stepAIC}
+
+stepCxQ <- hurdle(CxQ ~ Rain + Met + Loc + Hora + Mes + Rain7DSum + Rain14DSum + MTemp + MHum + Vien | Rain + Met + Loc + Hora + Mes + Rain7DSum + Rain14DSum + MTemp + MHum + Vien, dist = "negbin", data = ILE)
+
+  stepAIC.stepCxQ <- stepAIC(stepCxQ, trace = FALSE)
+  summary(stepAIC.stepCxQ)
+
+```
+
+
+```{r Model 37 Finalization}
+
+CxQ.37 <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | Rain:Oct + Met + HLC:MHum + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.37)
+  logLik_CxQ.37 <- logLik(CxQ.37)
+  logLik_CxQ.37
+  pR2(CxQ.37)
+  AIC(CxQ.35, CxQ.36, CxQ.37)
+  BIC(CxQ.35, CxQ.36, CxQ.37)
+  vif(CxQ.37)
+  autoplot.countreg(CxQ.37)
+
+CxQ.37.New <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | Rain:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(CxQ.37.New)
+  pR2(CxQ.37)
+  pR2(CxQ.37.New)
+  AIC(CxQ.37, CxQ.37.New)
+  BIC(CxQ.37, CxQ.37.New)
+  vif(CxQ.37)
+  vif(CxQ.37.New)
+  autoplot.countreg(CxQ.37)
+  autoplot.countreg(CxQ.37.New)
+  # Removal of Interaction Term fixes exaggerated beta
+
+
+  Final.CxQ <- hurdle(CxQ ~ Rain + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb | Rain:Oct + Met + Loc + Hora5 + Hora6 + Hora7 + Hora11 + Hora12 + Hora13 + Hora17 + Feb, dist = "negbin", data = ILE)
+  summary(Final.CxQ)
+  logLik_Final.CxQ <- logLik(Final.CxQ)
+  logLik_Final.CxQ
+  lrtest(Final.CxQ)
+  pR2(Final.CxQ)
+  AIC(Final.CxQ)
+  BIC(Final.CxQ)
+  vif(Final.CxQ)
+  autoplot.countreg(Final.CxQ)
+
+Final.CxQ.Null <- hurdle(CxQ ~ 1, dist = "negbin", data = ILE)
+  summary(Final.CxQ.Null)
+  logLik_Final.CxQ.Null <- logLik(Final.CxQ.Null)
+  logLik_Final.CxQ.Null
+  lrtest(Final.CxQ.Null)
+  pR2(Final.CxQ.Null)
+  AIC(Final.CxQ.Null)
+  BIC(Final.CxQ.Null)
+
+```
+
+
+```{r 1:1 Models for CxQ ! In Progress !}
+
+# Null Model
+  Aeae.Null <- glm(biAeae ~ 1, family = binomial(), data = ILE)
+  summary(Aeae.Null)
+  AIC(Aeae.Null)
+  logLik_Aeae.Null <- logLik(Aeae.Null)
+  logLik_Aeae.Null
+  lrtest(Aeae.Null)
+  pR2(Aeae.Null)
+
+# MTemp
+  Aeae.Temp <- glm(biAeae ~ MTemp, family = binomial(), data = ILE)
+  summary(Aeae.Temp)
+  AIC(Aeae.Temp)
+  logLik_Aeae.Temp <- logLik(Aeae.Temp)
+  logLik_Aeae.Temp
+  lrtest(Aeae.Temp)
+  pR2(Aeae.Temp)
+  # Creation of OR
+    OR_Aeae.Temp <- exp(0.02234)
+    OR_Aeae.Temp.lower_bound <- exp(0.02234 - 1.96 * 0.03610)
+    OR_Aeae.Temp.upper_bound <- exp(0.02234 + 1.96 * 0.03610)
+    OR_Aeae.Temp
+    OR_Aeae.Temp.lower_bound
+    OR_Aeae.Temp.upper_bound
+
+# MHum
+  Aeae.Hum <- glm(biAeae ~ MHum, family = binomial(), data = ILE)
+  summary(Aeae.Hum)
+  AIC(Aeae.Hum)
+  logLik_Aeae.Hum <- logLik(Aeae.Hum)
+  logLik_Aeae.Hum
+  lrtest(Aeae.Hum)
+  pR2(Aeae.Hum)
+  # Creation of OR
+    OR_Aeae.Hum <- exp(-0.02560)
+    OR_Aeae.Hum.lower_bound <- exp(-0.02560 - 1.96 * 0.01122)
+    OR_Aeae.Hum.upper_bound <- exp(-0.02560 + 1.96 * 0.01122)
+    OR_Aeae.Hum
+    OR_Aeae.Hum.lower_bound
+    OR_Aeae.Hum.upper_bound
+    
+# Viento
+  Aeae.Vien <- glm(biAeae ~ Vien, family = binomial(), data = ILE)
+  summary(Aeae.Vien)
+  AIC(Aeae.Vien)
+  logLik_Aeae.Vien <- logLik(Aeae.Vien)
+  logLik_Aeae.Vien
+  lrtest(Aeae.Vien)
+  pR2(Aeae.Vien)
+  # Creation of OR
+    OR_Aeae.Vien <- exp(0.05758)
+    OR_Aeae.Vien.lower_bound <- exp(0.05758 - 1.96 * 0.11689)
+    OR_Aeae.Vien.upper_bound <- exp(0.05758 + 1.96 * 0.11689)
+    OR_Aeae.Vien
+    OR_Aeae.Vien.lower_bound
+    OR_Aeae.Vien.upper_bound
+    
+# Rain
+  Aeae.Rain <- glm(biAeae ~ Rain, family = binomial(), data = ILE)
+  summary(Aeae.Rain)
+  AIC(Aeae.Rain)
+  logLik_Aeae.Rain <- logLik(Aeae.Rain)
+  logLik_Aeae.Rain
+  lrtest(Aeae.Rain)
+  pR2(Aeae.Rain)
+  # Creation of OR
+    OR_Aeae.Rain <- exp(0.005268)
+    OR_Aeae.Rain.lower_bound <- exp(0.005268 - 1.96 * 0.010226)
+    OR_Aeae.Rain.upper_bound <- exp(0.005268 + 1.96 * 0.010226)
+    OR_Aeae.Rain
+    OR_Aeae.Rain.lower_bound
+    OR_Aeae.Rain.upper_bound
+    
+# Met
+  Aeae.Met <- glm(biAeae ~ Met, family = binomial(), data = ILE)
+  summary(Aeae.Met)
+  AIC(Aeae.Met)
+  logLik_Aeae.Met <- logLik(Aeae.Met)
+  logLik_Aeae.Met
+  lrtest(Aeae.Met)
+  pR2(Aeae.Met)
+  # Creation of OR
+    OR_Aeae.Met <- exp(1.1744)
+    OR_Aeae.Met.lower_bound <- exp(1.1744 - 1.96 * 0.2230)
+    OR_Aeae.Met.upper_bound <- exp(1.1744 + 1.96 * 0.2230)
+    OR_Aeae.Met
+    OR_Aeae.Met.lower_bound
+    OR_Aeae.Met.upper_bound
+    
+# Met
+  Aeae.Met <- glm(biAeae ~ Met, family = binomial(), data = ILE)
+  summary(Aeae.Met)
+  AIC(Aeae.Met)
+  logLik_Aeae.Met <- logLik(Aeae.Met)
+  logLik_Aeae.Met
+  lrtest(Aeae.Met)
+  pR2(Aeae.Met)
+  # Creation of OR
+    OR_Aeae.Met <- exp(1.1744)
+    OR_Aeae.Met.lower_bound <- exp(1.1744 - 1.96 * 0.2230)
+    OR_Aeae.Met.upper_bound <- exp(1.1744 + 1.96 * 0.2230)
+    OR_Aeae.Met
+    OR_Aeae.Met.lower_bound
+    OR_Aeae.Met.upper_bound
+    
+# Met
+  Aeae.Loc <- glm(biAeae ~ Loc, family = binomial(), data = ILE)
+  summary(Aeae.Loc)
+  AIC(Aeae.Loc)
+  logLik_Aeae.Loc <- logLik(Aeae.Loc)
+  logLik_Aeae.Loc
+  lrtest(Aeae.Loc)
+  pR2(Aeae.Loc)
+  # Creation of OR
+    OR_Aeae.Loc <- exp(-2.3023)
+    OR_Aeae.Loc.lower_bound <- exp(-2.3023 - 1.96 * 0.3209)
+    OR_Aeae.Loc.upper_bound <- exp(-2.3023 + 1.96 * 0.3209)
+    OR_Aeae.Loc
+    OR_Aeae.Loc.lower_bound
+    OR_Aeae.Loc.upper_bound
+    
+# Met
+  Aeae.Hora <- glm(biAeae ~ Hora, family = binomial(), data = ILE)
+  summary(Aeae.Hora)
+  AIC(Aeae.Hora)
+  logLik_Aeae.Hora <- logLik(Aeae.Hora)
+  logLik_Aeae.Hora
+  lrtest(Aeae.Hora)
+  pR2(Aeae.Hora)
+  # Creation of ORs
+    # Hora6
+      OR_Aeae.Hora6 <- exp(1.2384)
+      OR_Aeae.Hora6.lower_bound <- exp(1.2384 - 1.96 * 0.6657)
+      OR_Aeae.Hora6.upper_bound <- exp(1.2384 + 1.96 * 0.6657)
+        print("Hora6 OR and 95% CI:")
+        print(OR_Aeae.Hora6)
+        print(OR_Aeae.Hora6.lower_bound)
+        print(OR_Aeae.Hora6.upper_bound)
+    # Hora7
+    OR_Aeae.Hora7 <- exp(0.5205)
+    OR_Aeae.Hora7.lower_bound <- exp(0.5205 - 1.96 * 0.7369)
+    OR_Aeae.Hora7.upper_bound <- exp(0.5205 + 1.96 * 0.7369)
+      print("Hora7 OR and 95% CI:")
+      print(OR_Aeae.Hora7)
+      print(OR_Aeae.Hora7.lower_bound)
+      print(OR_Aeae.Hora7.upper_bound)
+    # Hora11
+    OR_Aeae.Hora11 <- exp(1.8670)
+    OR_Aeae.Hora11.lower_bound <- exp(1.8670 - 1.96 * 0.6316)
+    OR_Aeae.Hora11.upper_bound <- exp(1.8670 + 1.96 * 0.6316)
+      print("Hora11 OR and 95% CI:")
+      print(OR_Aeae.Hora11)
+      print(OR_Aeae.Hora11.lower_bound)
+      print(OR_Aeae.Hora11.upper_bound)
+    # Hora12
+    OR_Aeae.Hora12 <- exp(1.9263)
+    OR_Aeae.Hora12.lower_bound <- exp(1.9263 - 1.96 * 0.6293)
+    OR_Aeae.Hora12.upper_bound <- exp(1.9263 + 1.96 * 0.6293)
+      print("Hora12 OR and 95% CI:")
+      print(OR_Aeae.Hora12)
+      print(OR_Aeae.Hora12.lower_bound)
+      print(OR_Aeae.Hora12.upper_bound)
+    # Hora13
+    OR_Aeae.Hora13 <- exp(1.5159)
+    OR_Aeae.Hora13.lower_bound <- exp(1.5159 - 1.96 * 0.6482)
+    OR_Aeae.Hora13.upper_bound <- exp(1.5159 + 1.96 * 0.6482)
+      print("Hora13 OR and 95% CI:")
+      print(OR_Aeae.Hora13)
+      print(OR_Aeae.Hora13.lower_bound)
+      print(OR_Aeae.Hora13.upper_bound)
+    # Hora17
+    OR_Aeae.Hora17 <- exp(1.8046)
+    OR_Aeae.Hora17.lower_bound <- exp(1.8046 - 1.96 * 0.6342)
+    OR_Aeae.Hora17.upper_bound <- exp(1.8046 + 1.96 * 0.6342)
+      print("Hora17 OR and 95% CI:")
+      print(OR_Aeae.Hora17)
+      print(OR_Aeae.Hora17.lower_bound)
+      print(OR_Aeae.Hora17.upper_bound)
+    # Hora18
+    OR_Aeae.Hora18 <- exp(1.9263)
+    OR_Aeae.Hora18.lower_bound <- exp(1.9263 - 1.96 * 0.6293)
+    OR_Aeae.Hora18.upper_bound <- exp(1.9263 + 1.96 * 0.6293)
+      print("Hora18 OR and 95% CI:")
+      print(OR_Aeae.Hora18)
+      print(OR_Aeae.Hora18.lower_bound)
+      print(OR_Aeae.Hora18.upper_bound)
+    # Hora19
+    OR_Aeae.Hora19 <- exp(1.0053)
+    OR_Aeae.Hora19.lower_bound <- exp(1.0053 - 1.96 * 0.6842)
+    OR_Aeae.Hora19.upper_bound <- exp(1.0053 + 1.96 * 0.6842)
+      print("Hora19 OR and 95% CI:")
+      print(OR_Aeae.Hora19)
+      print(OR_Aeae.Hora19.lower_bound)
+      print(OR_Aeae.Hora19.upper_bound)
+
+# Mes
+  Aeae.Mes <- glm(biAeae ~ Mes, family = binomial(), data = ILE)
+  summary(Aeae.Mes)
+  AIC(Aeae.Mes)
+  logLik_Aeae.Mes <- logLik(Aeae.Mes)
+  logLik_Aeae.Mes
+  lrtest(Aeae.Mes)
+  pR2(Aeae.Mes)
+  # Creation of OR
+    # Jun
+    OR_Mes.Jun <- exp(1.0769)
+    OR_Mes.Jun.lower_bound <- exp(1.0769 - 1.96 * 0.5835)
+    OR_Mes.Jun.upper_bound <- exp(1.0769 + 1.96 * 0.5835)
+    print("MesJun OR and 95% CI:")
+    print(OR_Mes.Jun)
+    print(OR_Mes.Jun.lower_bound)
+    print(OR_Mes.Jun.upper_bound)
+    # MesJul_21
+    OR_Mes.Jul_21 <- exp(0.8473)
+    OR_Mes.Jul_21.lower_bound <- exp(0.8473 - 1.96 * 0.6129)
+    OR_Mes.Jul_21.upper_bound <- exp(0.8473 + 1.96 * 0.6129)
+    print("MesJul_21 OR and 95% CI:")
+    print(OR_Mes.Jul_21)
+    print(OR_Mes.Jul_21.lower_bound)
+    print(OR_Mes.Jul_21.upper_bound)
+    # MesAug
+    OR_Mes.Aug <- exp(0.2303)
+    OR_Mes.Aug.lower_bound <- exp(0.2303 - 1.96 * 0.6814)
+    OR_Mes.Aug.upper_bound <- exp(0.2303 + 1.96 * 0.6814)
+    print("MesAug OR and 95% CI:")
+    print(OR_Mes.Aug)
+    print(OR_Mes.Aug.lower_bound)
+    print(OR_Mes.Aug.upper_bound)
+    # MesSep
+    OR_Mes.Sep <- exp(0.2303)
+    OR_Mes.Sep.lower_bound <- exp(0.2303 - 1.96 * 0.6814)
+    OR_Mes.Sep.upper_bound <- exp(0.2303 + 1.96 * 0.6814)
+    print("MesSep OR and 95% CI:")
+    print(OR_Mes.Sep)
+    print(OR_Mes.Sep.lower_bound)
+    print(OR_Mes.Sep.upper_bound)  
+    # MesOct
+    OR_Mes.Oct <- exp(1.1575)
+    OR_Mes.Oct.lower_bound <- exp(1.1575 - 1.96 * 0.5900)
+    OR_Mes.Oct.upper_bound <- exp(1.1575 + 1.96 * 0.5900)
+    print("MesOct OR and 95% CI:")
+    print(OR_Mes.Oct)
+    print(OR_Mes.Oct.lower_bound)
+    print(OR_Mes.Oct.upper_bound)
+    # MesNov
+    OR_Mes.Nov <- exp(0.7221)
+    OR_Mes.Nov.lower_bound <- exp(0.7221 - 1.96 * 0.6241)
+    OR_Mes.Nov.upper_bound <- exp(0.7221 + 1.96 * 0.6241)
+    print("MesNov OR and 95% CI:")
+    print(OR_Mes.Nov)
+    print(OR_Mes.Nov.lower_bound)
+    print(OR_Mes.Nov.upper_bound)   
+    # MesJan
+    OR_Mes.Jan <- exp(1.2451)
+    OR_Mes.Jan.lower_bound <- exp(1.2451 - 1.96 * 0.5845)
+    OR_Mes.Jan.upper_bound <- exp(1.2451 + 1.96 * 0.5845)
+    print("MesJan OR and 95% CI:")
+    print(OR_Mes.Jan)
+    print(OR_Mes.Jan.lower_bound)
+    print(OR_Mes.Jan.upper_bound)     
+    # MesFeb
+    OR_Mes.Feb <- exp(1.0629)
+    OR_Mes.Feb.lower_bound <- exp(1.0629 - 1.96 * 0.5963)
+    OR_Mes.Feb.upper_bound <- exp(1.0629 + 1.96 * 0.5963)
+    print("MesFeb OR and 95% CI:")
+    print(OR_Mes.Feb)
+    print(OR_Mes.Feb.lower_bound)
+    print(OR_Mes.Feb.upper_bound)
+    # MesMar
+    OR_Mes.Mar <- exp(0.7221)
+    OR_Mes.Mar.lower_bound <- exp(0.7221 - 1.96 * 0.6241)
+    OR_Mes.Mar.upper_bound <- exp(0.7221 + 1.96 * 0.6241)
+    print("MesMar OR and 95% CI:")
+    print(OR_Mes.Mar)
+    print(OR_Mes.Mar.lower_bound)
+    print(OR_Mes.Mar.upper_bound)
+    # MesApr
+    OR_Mes.Apr <- exp(0.8473)
+    OR_Mes.Apr.lower_bound <- exp(0.8473 - 1.96 * 0.6129)
+    OR_Mes.Apr.upper_bound <- exp(0.8473 + 1.96 * 0.6129)
+    print("MesApr OR and 95% CI:")
+    print(OR_Mes.Apr)
+    print(OR_Mes.Apr.lower_bound)
+    print(OR_Mes.Apr.upper_bound)    
+    # MesMay
+    OR_Mes.May <- exp(0.9601)
+    OR_Mes.May.lower_bound <- exp(0.9601 - 1.96 * 0.6038)
+    OR_Mes.May.upper_bound <- exp(0.9601 + 1.96 * 0.6038)
+    print("MesMay OR and 95% CI:")
+    print(OR_Mes.May)
+    print(OR_Mes.May.lower_bound)
+    print(OR_Mes.May.upper_bound)    
+    # MesJul_22
+    OR_Mes.Jul_22 <- exp(0.4199)
+    OR_Mes.Jul_22.lower_bound <- exp(0.4199 - 1.96 * 0.6565)
+    OR_Mes.Jul_22.upper_bound <- exp(0.4199 + 1.96 * 0.6565)
+    print("MesJul_22 OR and 95% CI:")
+    print(OR_Mes.Jul_22)
+    print(OR_Mes.Jul_22.lower_bound)
+    print(OR_Mes.Jul_22.upper_bound)
+
+# Rain*Feb
+  Aeae.RainFeb <- glm(biAeae ~ Rain:Feb, family = binomial(), data = ILE)
+  summary(Aeae.RainFeb)
+  AIC(Aeae.RainFeb)
+  logLik_Aeae.RainFeb <- logLik(Aeae.RainFeb)
+  logLik_Aeae.RainFeb
+  lrtest(Aeae.RainFeb)
+  pR2(Aeae.RainFeb)
+  # Creation of OR
+    OR_Aeae.RainFeb <- exp(0.155802)
+    OR_Aeae.RainFeb.lower_bound <- exp(0.155802 - 1.96 * 0.054791)
+    OR_Aeae.RainFeb.upper_bound <- exp(0.155802 + 1.96 * 0.054791)
+    OR_Aeae.RainFeb
+    OR_Aeae.RainFeb.lower_bound
+    OR_Aeae.RainFeb.upper_bound
+```
+
+
